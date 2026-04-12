@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import os from 'os';
+import { initDatabase } from './models/database';
 import authRouter, { authMiddleware } from './routes/auth';
 import inventoryRouter from './routes/inventory';
 import quotationsRouter from './routes/quotations';
@@ -35,9 +36,15 @@ app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`🖥️  星辰電腦管理系統已啟動: http://localhost:${PORT}`);
-  console.log(`📡 內網存取: http://${getLocalIP()}:${PORT}`);
+// 初始化資料庫後啟動
+initDatabase().then(() => {
+  app.listen(PORT, () => {
+    console.log(`🖥️  星辰電腦管理系統已啟動: http://localhost:${PORT}`);
+    console.log(`📡 內網存取: http://${getLocalIP()}:${PORT}`);
+  });
+}).catch(err => {
+  console.error('❌ 資料庫初始化失敗:', err);
+  process.exit(1);
 });
 
 function getLocalIP(): string {

@@ -1,16 +1,42 @@
 version: '3.8'
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: nszpc-db-${ENV:-dev}
+    environment:
+      POSTGRES_DB: nszpc
+      POSTGRES_USER: nszpc
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-nszpc}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nszpc"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   app:
     build: .
     container_name: nszpc-${ENV:-dev}
     ports:
       - "${PORT:-3000}:3000"
     volumes:
-      - app-data:/app/data
+      - app-uploads:/app/data/uploads
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - PORT=3000
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=nszpc
+      - DB_USER=nszpc
+      - DB_PASSWORD=${DB_PASSWORD:-nszpc}
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
@@ -19,5 +45,7 @@ services:
       retries: 3
 
 volumes:
-  app-data:
+  pg-data:
+    driver: local
+  app-uploads:
     driver: local

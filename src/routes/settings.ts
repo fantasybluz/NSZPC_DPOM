@@ -1,13 +1,13 @@
 import { Router, Request, Response } from 'express';
-import db from '../models/database';
+import pool from '../models/database';
 import type { Setting } from '../types';
 
 const router = Router();
 
 // IG 爬蟲 — 放在 /:key 前面
 router.get('/instagram/fetch', async (_req: Request, res: Response) => {
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'ig_username'").get() as Pick<Setting, 'value'> | undefined;
-  const username = row?.value;
+  const { rows } = await pool.query("SELECT value FROM settings WHERE key = 'ig_username'");
+  const username = rows[0]?.value;
   if (!username) return res.json({ error: '未設定 IG 帳號', followers: null });
 
   try {
@@ -21,9 +21,6 @@ router.get('/instagram/fetch', async (_req: Request, res: Response) => {
     });
     const html = await response.text();
 
-    // 嘗試從 og:description 解析
-    // 格式: "XXX Followers, XXX Following, XXX Posts - ..."
-    // 或中文: "XXX 位追蹤者、XXX 追蹤中、XXX 則貼文 - ..."
     let followers: number | null = null;
     let following: number | null = null;
     let posts: number | null = null;
@@ -33,11 +30,9 @@ router.get('/instagram/fetch', async (_req: Request, res: Response) => {
 
     if (ogMatch) {
       const desc = ogMatch[1];
-      // English: "1,234 Followers, 567 Following, 89 Posts"
       const enMatch = desc.match(/([\d,.]+[KkMm]?)\s*Followers/i);
       const enFollowing = desc.match(/([\d,.]+[KkMm]?)\s*Following/i);
       const enPosts = desc.match(/([\d,.]+[KkMm]?)\s*Posts/i);
-      // Chinese: "1,234 位追蹤者"
       const zhMatch = desc.match(/([\d,.]+[KkMm]?)\s*位追蹤者/);
       const zhFollowing = desc.match(/([\d,.]+[KkMm]?)\s*追蹤中/);
       const zhPosts = desc.match(/([\d,.]+[KkMm]?)\s*則貼文/);
@@ -58,7 +53,6 @@ router.get('/instagram/fetch', async (_req: Request, res: Response) => {
       if (pMatch) posts = parseNum(pMatch[1]);
     }
 
-    // 也嘗試從 JSON-LD 或 script 中解析
     if (followers === null) {
       const jsonMatch = html.match(/"edge_followed_by"\s*:\s*\{\s*"count"\s*:\s*(\d+)/);
       if (jsonMatch) followers = parseInt(jsonMatch[1]);
@@ -67,11 +61,10 @@ router.get('/instagram/fetch', async (_req: Request, res: Response) => {
     }
 
     if (followers !== null) {
-      // 儲存最新數據
-      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('ig_followers', ?)").run(String(followers));
-      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('ig_following', ?)").run(String(following || 0));
-      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('ig_posts', ?)").run(String(posts || 0));
-      db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('ig_last_fetch', ?)").run(new Date().toISOString());
+      await pool.query("INSERT INTO settings (key, value) VALUES ('ig_followers', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [String(followers)]);
+      await pool.query("INSERT INTO settings (key, value) VALUES ('ig_following', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [String(following || 0)]);
+      await pool.query("INSERT INTO settings (key, value) VALUES ('ig_posts', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [String(posts || 0)]);
+      await pool.query("INSERT INTO settings (key, value) VALUES ('ig_last_fetch', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [new Date().toISOString()]);
     }
 
     res.json({ username, followers, following, posts, fetched: followers !== null });
@@ -81,24 +74,24 @@ router.get('/instagram/fetch', async (_req: Request, res: Response) => {
 });
 
 // 手動更新 IG 追蹤數
-router.put('/instagram/manual', (req: Request, res: Response) => {
+router.put('/instagram/manual', async (req: Request, res: Response) => {
   const { followers, following, posts } = req.body;
-  if (followers !== undefined) db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('ig_followers', ?)").run(String(followers));
-  if (following !== undefined) db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('ig_following', ?)").run(String(following));
-  if (posts !== undefined) db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('ig_posts', ?)").run(String(posts));
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('ig_last_fetch', ?)").run(new Date().toISOString());
+  if (followers !== undefined) await pool.query("INSERT INTO settings (key, value) VALUES ('ig_followers', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [String(followers)]);
+  if (following !== undefined) await pool.query("INSERT INTO settings (key, value) VALUES ('ig_following', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [String(following)]);
+  if (posts !== undefined) await pool.query("INSERT INTO settings (key, value) VALUES ('ig_posts', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [String(posts)]);
+  await pool.query("INSERT INTO settings (key, value) VALUES ('ig_last_fetch', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [new Date().toISOString()]);
   res.json({ success: true });
 });
 
 // 通用 key-value
-router.get('/:key', (req: Request, res: Response) => {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(req.params.key) as Pick<Setting, 'value'> | undefined;
-  res.json({ key: req.params.key, value: row ? row.value : '' });
+router.get('/:key', async (req: Request, res: Response) => {
+  const { rows } = await pool.query('SELECT value FROM settings WHERE key = $1', [req.params.key]);
+  res.json({ key: req.params.key, value: rows[0] ? rows[0].value : '' });
 });
 
-router.put('/:key', (req: Request, res: Response) => {
+router.put('/:key', async (req: Request, res: Response) => {
   const { value } = req.body as { value?: string };
-  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(req.params.key, value || '');
+  await pool.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [req.params.key, value || '']);
   res.json({ success: true });
 });
 

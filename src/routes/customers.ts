@@ -1,73 +1,83 @@
 import { Router, Request, Response } from 'express';
-import db from '../models/database';
+import pool from '../models/database';
 import type { Customer, ServiceRecord } from '../types';
 
 const router = Router();
 
-router.get('/', (req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   const { source, city, search } = req.query;
   let sql = 'SELECT * FROM customers';
   const params: any[] = [];
   const conditions: string[] = [];
-  if (source) { conditions.push('source = ?'); params.push(source); }
-  if (city) { conditions.push('city = ?'); params.push(city); }
+  let idx = 1;
+  if (source) { conditions.push(`source = $${idx++}`); params.push(source); }
+  if (city) { conditions.push(`city = $${idx++}`); params.push(city); }
   if (search) {
-    conditions.push('(name LIKE ? OR phone LIKE ? OR email LIKE ?)');
+    conditions.push(`(name LIKE $${idx} OR phone LIKE $${idx + 1} OR email LIKE $${idx + 2})`);
     const s = `%${search}%`;
     params.push(s, s, s);
+    idx += 3;
   }
   if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
   sql += ' ORDER BY created_at DESC';
-  res.json(db.prepare(sql).all(...params));
+  const { rows } = await pool.query(sql, params);
+  res.json(rows);
 });
 
 // 統計 (必須在 /:id 前面)
-router.get('/stats/distribution', (_req: Request, res: Response) => {
-  const byCity = db.prepare("SELECT city, COUNT(*) as count FROM customers WHERE city != '' GROUP BY city ORDER BY count DESC").all();
-  const bySource = db.prepare("SELECT source, COUNT(*) as count FROM customers WHERE source != '' GROUP BY source ORDER BY count DESC").all();
-  const total = db.prepare('SELECT COUNT(*) as count FROM customers').get() as { count: number };
-  res.json({ byCity, bySource, total: total.count });
+router.get('/stats/distribution', async (_req: Request, res: Response) => {
+  const { rows: byCity } = await pool.query("SELECT city, COUNT(*) as count FROM customers WHERE city != '' GROUP BY city ORDER BY count DESC");
+  const { rows: bySource } = await pool.query("SELECT source, COUNT(*) as count FROM customers WHERE source != '' GROUP BY source ORDER BY count DESC");
+  const { rows: totalRows } = await pool.query('SELECT COUNT(*) as count FROM customers');
+  res.json({ byCity, bySource, total: parseInt(totalRows[0].count) });
 });
 
-router.get('/:id', (req: Request, res: Response) => {
-  const c = db.prepare('SELECT * FROM customers WHERE id = ?').get(req.params.id) as Customer | undefined;
+router.get('/:id', async (req: Request, res: Response) => {
+  const { rows } = await pool.query('SELECT * FROM customers WHERE id = $1', [req.params.id]);
+  const c = rows[0] as Customer | undefined;
   if (!c) return res.status(404).json({ error: '找不到客戶' });
-  c.services = db.prepare('SELECT * FROM service_records WHERE customer_id = ? ORDER BY service_date DESC').all(c.id) as ServiceRecord[];
-  c.quotations = db.prepare('SELECT id, quotation_no, status, total_price, created_at FROM quotations WHERE customer_id = ? ORDER BY created_at DESC').all(c.id) as any[];
+  const { rows: services } = await pool.query('SELECT * FROM service_records WHERE customer_id = $1 ORDER BY service_date DESC', [c.id]);
+  c.services = services as ServiceRecord[];
+  const { rows: quotations } = await pool.query('SELECT id, quotation_no, status, total_price, created_at FROM quotations WHERE customer_id = $1 ORDER BY created_at DESC', [c.id]);
+  c.quotations = quotations as any[];
   res.json(c);
 });
 
-router.post('/', (req: Request, res: Response) => {
+router.post('/', async (req: Request, res: Response) => {
   const { name, phone, email, source, city, district, address, note } = req.body;
-  const result = db.prepare(
-    'INSERT INTO customers (name, phone, email, source, city, district, address, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  ).run(name, phone || '', email || '', source || '', city || '', district || '', address || '', note || '');
-  res.json({ id: result.lastInsertRowid });
+  const { rows } = await pool.query(
+    'INSERT INTO customers (name, phone, email, source, city, district, address, note) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id',
+    [name, phone || '', email || '', source || '', city || '', district || '', address || '', note || '']
+  );
+  res.json({ id: rows[0].id });
 });
 
-router.put('/:id', (req: Request, res: Response) => {
+router.put('/:id', async (req: Request, res: Response) => {
   const { name, phone, email, source, city, district, address, note } = req.body;
-  db.prepare(
-    "UPDATE customers SET name=?, phone=?, email=?, source=?, city=?, district=?, address=?, note=?, updated_at=datetime('now','localtime') WHERE id=?"
-  ).run(name, phone || '', email || '', source || '', city || '', district || '', address || '', note || '', req.params.id);
+  await pool.query(
+    'UPDATE customers SET name=$1, phone=$2, email=$3, source=$4, city=$5, district=$6, address=$7, note=$8, updated_at=NOW() WHERE id=$9',
+    [name, phone || '', email || '', source || '', city || '', district || '', address || '', note || '', req.params.id]
+  );
   res.json({ success: true });
 });
 
-router.delete('/:id', (req: Request, res: Response) => {
-  db.prepare('DELETE FROM service_records WHERE customer_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM customers WHERE id = ?').run(req.params.id);
+router.delete('/:id', async (req: Request, res: Response) => {
+  await pool.query('DELETE FROM service_records WHERE customer_id = $1', [req.params.id]);
+  await pool.query('DELETE FROM customers WHERE id = $1', [req.params.id]);
   res.json({ success: true });
 });
 
-router.post('/:id/services', (req: Request, res: Response) => {
+router.post('/:id/services', async (req: Request, res: Response) => {
   const { service_type, description, service_date } = req.body;
-  const result = db.prepare('INSERT INTO service_records (customer_id, service_type, description, service_date) VALUES (?, ?, ?, ?)')
-    .run(req.params.id, service_type || '', description || '', service_date || new Date().toISOString().slice(0, 10));
-  res.json({ id: result.lastInsertRowid });
+  const { rows } = await pool.query(
+    'INSERT INTO service_records (customer_id, service_type, description, service_date) VALUES ($1, $2, $3, $4) RETURNING id',
+    [req.params.id, service_type || '', description || '', service_date || new Date().toISOString().slice(0, 10)]
+  );
+  res.json({ id: rows[0].id });
 });
 
-router.delete('/:id/services/:sid', (req: Request, res: Response) => {
-  db.prepare('DELETE FROM service_records WHERE id = ? AND customer_id = ?').run(req.params.sid, req.params.id);
+router.delete('/:id/services/:sid', async (req: Request, res: Response) => {
+  await pool.query('DELETE FROM service_records WHERE id = $1 AND customer_id = $2', [req.params.sid, req.params.id]);
   res.json({ success: true });
 });
 

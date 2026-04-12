@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nszpc-postgres
+  namespace: nszpc
+  labels:
+    app: nszpc-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nszpc-postgres
+  template:
+    metadata:
+      labels:
+        app: nszpc-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: "nszpc"
+            - name: POSTGRES_USER
+              value: "nszpc"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: nszpc-db-secret
+                  key: DB_PASSWORD
+          volumeMounts:
+            - name: pg-data
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "nszpc"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "nszpc"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+      volumes:
+        - name: pg-data
+          persistentVolumeClaim:
+            claimName: nszpc-pg-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nszpc-postgres
+  namespace: nszpc
+spec:
+  selector:
+    app: nszpc-postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
