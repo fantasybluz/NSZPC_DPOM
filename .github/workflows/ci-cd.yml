@@ -1,0 +1,88 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop, staging]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  IMAGE_NAME: nszpc-manager
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set environment
+        id: env
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            echo "ENV=dev" >> $GITHUB_OUTPUT
+            echo "PORT=3001" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" = "refs/heads/staging" ]; then
+            echo "ENV=stage" >> $GITHUB_OUTPUT
+            echo "PORT=3002" >> $GITHUB_OUTPUT
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "ENV=production" >> $GITHUB_OUTPUT
+            echo "PORT=3000" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Docker image
+        run: |
+          docker build -t $IMAGE_NAME:${{ steps.env.outputs.ENV }}-${{ github.sha }} .
+          docker tag $IMAGE_NAME:${{ steps.env.outputs.ENV }}-${{ github.sha }} $IMAGE_NAME:${{ steps.env.outputs.ENV }}-latest
+
+  deploy-dev:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    environment: development
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Dev
+        run: |
+          echo "Deploying to Development environment..."
+          ENV=dev PORT=3001 NODE_ENV=development docker compose up -d --build
+
+  deploy-stage:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/staging'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Staging
+        run: |
+          echo "Deploying to Staging environment..."
+          ENV=stage PORT=3002 NODE_ENV=staging docker compose up -d --build
+
+  deploy-production:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Production
+        run: |
+          echo "Deploying to Production environment..."
+          ENV=production PORT=3000 NODE_ENV=production docker compose up -d --build
