@@ -4,10 +4,9 @@ metadata:
   name: nszpc-service
   namespace: nszpc
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: nszpc
   ports:
     - port: 3000
       targetPort: 3000
-      nodePort: 30000
