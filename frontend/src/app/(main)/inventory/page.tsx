@@ -291,15 +291,29 @@ export default function InventoryPage() {
       min_quantity: parseInt(formData.min_quantity) || 0,
       note: formData.note,
     };
+    const stockQty = parseInt(formData.initial_qty) || 0;
+    const stockCost = parseInt(formData.initial_cost) || 0;
+
     if (!formModal.item) {
-      payload.initial_qty = parseInt(formData.initial_qty) || 0;
-      payload.initial_cost = parseInt(formData.initial_cost) || 0;
+      payload.initial_qty = stockQty;
+      payload.initial_cost = stockCost;
       payload.supplier = formData.supplier;
     }
     try {
       if (formModal.item) {
         await api.put(`/inventory/${formModal.item.id}`, payload);
-        showToast('已更新', 'success');
+        // 如果有填進貨數量和單價，同時進貨
+        if (stockQty > 0 && stockCost > 0) {
+          await api.post(`/inventory/${formModal.item.id}/stock-in`, {
+            quantity: stockQty,
+            unit_cost: stockCost,
+            supplier: formData.supplier || '',
+            note: '編輯時追加進貨',
+          });
+          showToast(`已更新，並進貨 ${stockQty} 件`, 'success');
+        } else {
+          showToast('已更新', 'success');
+        }
       } else {
         await api.post('/inventory', payload);
         showToast('已新增', 'success');
@@ -726,44 +740,40 @@ export default function InventoryPage() {
               onChange={e => setFormData(d => ({ ...d, note: e.target.value }))}
             />
           </div>
-          {!formModal.item && (
-            <>
-              <div className="col-12">
-                <hr className="my-1" />
-                <h6 className="text-muted small">初始進貨（選填）</h6>
-              </div>
-              <div className="col-md-4">
-                <label className="form-label">進貨數量</label>
-                <input
-                  type="number"
-                  className="form-control"
-                  value={formData.initial_qty}
-                  min={0}
-                  onChange={e => setFormData(d => ({ ...d, initial_qty: e.target.value }))}
-                />
-              </div>
-              <div className="col-md-4">
-                <label className="form-label">進貨單價</label>
-                <input
-                  type="number"
-                  className="form-control"
-                  value={formData.initial_cost}
-                  min={0}
-                  onChange={e => setFormData(d => ({ ...d, initial_cost: e.target.value }))}
-                />
-              </div>
-              <div className="col-md-4">
-                <label className="form-label">進貨來源</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="例: 原價屋"
-                  value={formData.supplier}
-                  onChange={e => setFormData(d => ({ ...d, supplier: e.target.value }))}
-                />
-              </div>
-            </>
-          )}
+          <div className="col-12">
+            <hr className="my-1" />
+            <h6 className="text-muted small">{formModal.item ? '追加進貨（選填，留空不進貨）' : '初始進貨（選填）'}</h6>
+          </div>
+          <div className="col-md-4">
+            <label className="form-label">進貨數量</label>
+            <input
+              type="number"
+              className="form-control"
+              value={formData.initial_qty}
+              min={0}
+              onChange={e => setFormData(d => ({ ...d, initial_qty: e.target.value }))}
+            />
+          </div>
+          <div className="col-md-4">
+            <label className="form-label">進貨單價</label>
+            <input
+              type="number"
+              className="form-control"
+              value={formData.initial_cost}
+              min={0}
+              onChange={e => setFormData(d => ({ ...d, initial_cost: e.target.value }))}
+            />
+          </div>
+          <div className="col-md-4">
+            <label className="form-label">進貨來源</label>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="例: 原價屋"
+              value={formData.supplier}
+              onChange={e => setFormData(d => ({ ...d, supplier: e.target.value }))}
+            />
+          </div>
         </div>
       </Modal>
 
