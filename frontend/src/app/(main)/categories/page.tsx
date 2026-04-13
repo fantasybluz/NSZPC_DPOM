@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
@@ -31,6 +31,11 @@ export default function CategoriesPage() {
   const { isAdmin } = useAuth();
   const { showToast } = useToast();
 
+  // Drag state
+  const dragItem = useRef<{ id: number; depth: number; parentId: number | null } | null>(null);
+  const [dragOverId, setDragOverId] = useState<number | null>(null);
+  const [dragPosition, setDragPosition] = useState<'top' | 'bottom' | null>(null);
+
   const loadTree = useCallback(async () => {
     try {
       const data = await api.get<Category[]>('/inventory/categories');
@@ -45,30 +50,18 @@ export default function CategoriesPage() {
   useEffect(() => { loadTree(); }, [loadTree]);
 
   const openAddRoot = () => {
-    setEditId(null);
-    setParentId(null);
-    setFormName('');
-    setFormIcon('');
-    setModalTitle('新增主分類');
-    setModalOpen(true);
+    setEditId(null); setParentId(null); setFormName(''); setFormIcon('');
+    setModalTitle('新增主分類'); setModalOpen(true);
   };
 
   const openAddSub = (pid: number) => {
-    setEditId(null);
-    setParentId(pid);
-    setFormName('');
-    setFormIcon('');
-    setModalTitle('新增子分類');
-    setModalOpen(true);
+    setEditId(null); setParentId(pid); setFormName(''); setFormIcon('');
+    setModalTitle('新增子分類'); setModalOpen(true);
   };
 
   const openEdit = (cat: Category) => {
-    setEditId(cat.id);
-    setParentId(null);
-    setFormName(cat.name);
-    setFormIcon(cat.icon || '');
-    setModalTitle(`編輯: ${cat.name}`);
-    setModalOpen(true);
+    setEditId(cat.id); setParentId(null); setFormName(cat.name); setFormIcon(cat.icon || '');
+    setModalTitle(`編輯: ${cat.name}`); setModalOpen(true);
   };
 
   const handleSave = async () => {
@@ -109,13 +102,127 @@ export default function CategoriesPage() {
     });
   };
 
+  // ========== Drag & Drop ==========
+
+  const handleDragStart = (e: React.DragEvent, node: Category, depth: number) => {
+    dragItem.current = { id: node.id, depth, parentId: node.parent_id };
+    e.dataTransfer.effectAllowed = 'move';
+    // Make the dragged element semi-transparent
+    const el = e.currentTarget as HTMLElement;
+    setTimeout(() => el.style.opacity = '0.4', 0);
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    (e.currentTarget as HTMLElement).style.opacity = '1';
+    dragItem.current = null;
+    setDragOverId(null);
+    setDragPosition(null);
+  };
+
+  const handleDragOver = (e: React.DragEvent, node: Category, depth: number) => {
+    if (!dragItem.current) return;
+    // Only allow same-level drag (same depth & same parent)
+    if (dragItem.current.depth !== depth) return;
+    if (dragItem.current.parentId !== node.parent_id) return;
+    if (dragItem.current.id === node.id) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const mid = rect.top + rect.height / 2;
+    const pos = e.clientY < mid ? 'top' : 'bottom';
+
+    setDragOverId(node.id);
+    setDragPosition(pos);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverId(null);
+    setDragPosition(null);
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetNode: Category, depth: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverId(null);
+    setDragPosition(null);
+
+    if (!dragItem.current) return;
+    if (dragItem.current.depth !== depth) return;
+    if (dragItem.current.parentId !== targetNode.parent_id) return;
+    if (dragItem.current.id === targetNode.id) return;
+
+    // Reorder in the tree
+    const reorderSiblings = (nodes: Category[]): Category[] => {
+      const siblings = [...nodes];
+      const dragIdx = siblings.findIndex(n => n.id === dragItem.current!.id);
+      const targetIdx = siblings.findIndex(n => n.id === targetNode.id);
+      if (dragIdx === -1 || targetIdx === -1) return siblings;
+
+      const [moved] = siblings.splice(dragIdx, 1);
+      const insertIdx = dragPosition === 'top'
+        ? siblings.findIndex(n => n.id === targetNode.id)
+        : siblings.findIndex(n => n.id === targetNode.id) + 1;
+      siblings.splice(insertIdx, 0, moved);
+      return siblings;
+    };
+
+    // Find the right level and reorder
+    const reorderTree = (nodes: Category[]): Category[] => {
+      // Check if the target is at this level
+      if (nodes.some(n => n.id === targetNode.id)) {
+        return reorderSiblings(nodes);
+      }
+      // Recurse into children
+      return nodes.map(n => ({
+        ...n,
+        children: n.children ? reorderTree(n.children) : undefined,
+      }));
+    };
+
+    const newTree = reorderTree(tree);
+    setTree(newTree);
+
+    // Save to backend
+    const items: { id: number; sort_order: number; parent_id: number | null }[] = [];
+    const collect = (nodes: Category[], pid: number | null) => {
+      nodes.forEach((n, idx) => {
+        items.push({ id: n.id, sort_order: idx + 1, parent_id: pid });
+        if (n.children) collect(n.children, n.id);
+      });
+    };
+    collect(newTree, null);
+
+    try {
+      await api.put('/inventory/categories/reorder', { items });
+      showToast('排序已更新');
+      loadTree();
+    } catch (err: any) {
+      showToast(err.message, 'danger');
+      loadTree(); // revert
+    }
+  };
+
+  // ========== Render ==========
+
   const renderNode = (node: Category, depth: number): React.ReactNode => {
     const hasChildren = (node.children?.length || 0) > 0;
     const isCollapsed = collapsed.has(node.id);
     const iconColor = DEPTH_COLORS[Math.min(depth, DEPTH_COLORS.length - 1)];
+    const isDragOver = dragOverId === node.id;
 
     return (
-      <div key={node.id} className="cat-node">
+      <div
+        key={node.id}
+        className={`cat-node ${isDragOver && dragPosition === 'top' ? 'drag-over-top' : ''} ${isDragOver && dragPosition === 'bottom' ? 'drag-over-bottom' : ''}`}
+        draggable
+        onDragStart={e => handleDragStart(e, node, depth)}
+        onDragEnd={handleDragEnd}
+        onDragOver={e => handleDragOver(e, node, depth)}
+        onDragLeave={handleDragLeave}
+        onDrop={e => handleDrop(e, node, depth)}
+      >
         <div className="cat-node-header" style={{ paddingLeft: 12 + depth * 24 }}>
           <div className="d-flex align-items-center gap-2">
             <span className="cat-drag-handle"><i className="bi bi-grip-vertical" /></span>
@@ -155,7 +262,7 @@ export default function CategoriesPage() {
               <h6 className="mb-0"><i className="bi bi-diagram-3" /> 商品分類管理</h6>
               <button className="btn btn-primary btn-sm" onClick={openAddRoot}><i className="bi bi-plus-lg" /> 新增主分類</button>
             </div>
-            <p className="text-muted small mb-3">點擊 <i className="bi bi-chevron-down" /> 展開/收合，每個分類都可新增子分類（無深度限制）。</p>
+            <p className="text-muted small mb-3">拖曳 <i className="bi bi-grip-vertical" /> 可排序（同層級），點擊 <i className="bi bi-chevron-down" /> 展開/收合。</p>
             <div>
               {tree.length === 0 ? (
                 <p className="text-muted text-center">尚無分類，點右上角新增</p>
@@ -174,6 +281,7 @@ export default function CategoriesPage() {
               <li>例: <strong>電源供應器</strong>（單層）</li>
               <li>庫存只能歸在<strong>最末端分類</strong></li>
               <li>有庫存的分類無法刪除</li>
+              <li>拖曳 <i className="bi bi-grip-vertical" /> 排序（僅同層級）</li>
             </ul>
             <h6 className="mt-3"><i className="bi bi-bootstrap-icons" /> 可用圖示</h6>
             <div className="d-flex flex-wrap gap-2 small">
