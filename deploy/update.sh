@@ -15,9 +15,14 @@ echo "📥 [1/4] 拉取最新程式碼..."
 git pull
 echo ""
 
+# 自動產生版號
+APP_VERSION="$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
+echo "📌 版號: ${APP_VERSION}"
+echo ""
+
 # 2. 重新 build images
 echo "🐳 [2/4] Build API Image..."
-sudo docker build -t nszpc-api:latest .
+sudo docker build --build-arg APP_VERSION="${APP_VERSION}" -t nszpc-api:latest .
 echo ""
 
 echo "🌐 [3/4] Build Nginx Image (含 Next.js)..."
@@ -45,4 +50,4 @@ echo ""
 echo "📊 部署狀態："
 sudo microk8s kubectl get pods -n nszpc
 echo ""
-echo "✅ 更新完成！"
+echo "✅ 更新完成！版號: ${APP_VERSION}"

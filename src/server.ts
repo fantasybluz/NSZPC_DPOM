@@ -20,6 +20,11 @@ app.use(express.urlencoded({ extended: true }));
 // 圖片上傳的靜態目錄（保留給 API 使用）
 app.use('/api/uploads', express.static(path.join(__dirname, '..', 'data', 'uploads')));
 
+// 版本資訊（不需認證）
+app.get('/api/version', (_req, res) => {
+  res.json({ version: process.env.APP_VERSION || '1.0.0' });
+});
+
 // Auth routes (不需要認證)
 app.use('/api/auth', authRouter);
 

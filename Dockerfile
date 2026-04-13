@@ -19,6 +19,8 @@ RUN mkdir -p /app/data/uploads
 
 EXPOSE 3000
 
+ARG APP_VERSION=dev
 ENV NODE_ENV=production
+ENV APP_VERSION=${APP_VERSION}
 
 CMD ["node", "dist/server.js"]

@@ -77,6 +77,20 @@ router.get('/me', authMiddleware, (req: Request, res: Response) => {
   res.json(req.user);
 });
 
+// 修改自己的密碼
+router.put('/change-password', authMiddleware, async (req: Request, res: Response) => {
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password) return res.status(400).json({ error: '請輸入目前密碼和新密碼' });
+  if (new_password.length < 4) return res.status(400).json({ error: '新密碼至少 4 個字元' });
+
+  const { rows } = await pool.query('SELECT password FROM users WHERE id = $1', [req.user!.userId]);
+  if (rows.length === 0) return res.status(404).json({ error: '使用者不存在' });
+  if (rows[0].password !== hashPassword(current_password)) return res.status(400).json({ error: '目前密碼錯誤' });
+
+  await pool.query('UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2', [hashPassword(new_password), req.user!.userId]);
+  res.json({ success: true });
+});
+
 // ========== 使用者管理 (僅管理員) ==========
 
 function adminOnly(req: Request, res: Response, next: NextFunction): void {

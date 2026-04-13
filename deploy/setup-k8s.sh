@@ -48,9 +48,14 @@ sudo chmod 777 /var/lib/nszpc/uploads
 echo "  ✅ /var/lib/nszpc/{postgres,uploads}"
 echo ""
 
+# 自動產生版號：日期 + git short hash
+APP_VERSION="$(date +%Y%m%d)-$(git rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
+echo "📌 版號: ${APP_VERSION}"
+echo ""
+
 # ========== 3. Build 後端 API Image ==========
 echo "🐳 [3/9] Build 後端 API Image..."
-sudo docker build -t nszpc-api:latest .
+sudo docker build --build-arg APP_VERSION="${APP_VERSION}" -t nszpc-api:latest .
 echo "  ✅ API Image build 完成"
 echo ""
 
