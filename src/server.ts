@@ -17,7 +17,8 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, '..', 'public')));
+// 圖片上傳的靜態目錄（保留給 API 使用）
+app.use('/api/uploads', express.static(path.join(__dirname, '..', 'data', 'uploads')));
 
 // Auth routes (不需要認證)
 app.use('/api/auth', authRouter);
@@ -30,11 +31,6 @@ app.use('/api/suppliers', authMiddleware, suppliersRouter);
 app.use('/api/purchases', authMiddleware, purchasesRouter);
 app.use('/api/reports', authMiddleware, reportsRouter);
 app.use('/api/settings', authMiddleware, settingsRouter);
-
-// SPA fallback
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
-});
 
 // 初始化資料庫後啟動
 initDatabase().then(() => {

@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: nszpc
-          image: nszpc-dpom:latest
+          image: nszpc-api:latest
           imagePullPolicy: Never
           ports:
             - containerPort: 3000

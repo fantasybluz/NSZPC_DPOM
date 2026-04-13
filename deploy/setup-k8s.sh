@@ -11,7 +11,7 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
 # ========== 1. 安裝必要工具 ==========
-echo "📦 [1/8] 安裝必要工具..."
+echo "📦 [1/9] 安裝必要工具..."
 
 if ! command -v docker &> /dev/null; then
   echo "  安裝 Docker..."
@@ -40,7 +40,7 @@ sudo microk8s enable dns storage
 echo ""
 
 # ========== 2. 建立資料目錄 ==========
-echo "📁 [2/8] 建立資料目錄..."
+echo "📁 [2/9] 建立資料目錄..."
 sudo mkdir -p /var/lib/nszpc/postgres
 sudo mkdir -p /var/lib/nszpc/uploads
 sudo chmod 777 /var/lib/nszpc/postgres
@@ -48,47 +48,57 @@ sudo chmod 777 /var/lib/nszpc/uploads
 echo "  ✅ /var/lib/nszpc/{postgres,uploads}"
 echo ""
 
-# ========== 3. Build Docker Image ==========
-echo "🐳 [3/8] Build Docker Image..."
-sudo docker build -t nszpc-dpom:latest .
-echo "  ✅ Image build 完成"
+# ========== 3. Build 後端 API Image ==========
+echo "🐳 [3/9] Build 後端 API Image..."
+sudo docker build -t nszpc-api:latest .
+echo "  ✅ API Image build 完成"
 echo ""
 
-# ========== 4. 匯入 Image 到 microk8s ==========
-echo "📤 [4/8] 匯入 Image 到 microk8s..."
-sudo docker save nszpc-dpom:latest > /tmp/nszpc-dpom.tar
-sudo microk8s ctr image import /tmp/nszpc-dpom.tar
-rm -f /tmp/nszpc-dpom.tar
-echo "  ✅ Image 已匯入"
+# ========== 4. Build 前端 Nginx Image ==========
+echo "🌐 [4/9] Build 前端 Nginx Image (含 Next.js)..."
+sudo docker build -t nszpc-nginx:latest -f deploy/Dockerfile.nginx .
+echo "  ✅ Nginx Image build 完成"
 echo ""
 
-# ========== 5. 部署基礎資源 ==========
-echo "🔧 [5/8] 部署 Namespace + Secret + PV..."
+# ========== 5. 匯入 Images 到 microk8s ==========
+echo "📤 [5/9] 匯入 Images 到 microk8s..."
+sudo docker save nszpc-api:latest > /tmp/nszpc-api.tar
+sudo microk8s ctr image import /tmp/nszpc-api.tar
+rm -f /tmp/nszpc-api.tar
+
+sudo docker save nszpc-nginx:latest > /tmp/nszpc-nginx.tar
+sudo microk8s ctr image import /tmp/nszpc-nginx.tar
+rm -f /tmp/nszpc-nginx.tar
+echo "  ✅ Images 已匯入"
+echo ""
+
+# ========== 6. 部署基礎資源 ==========
+echo "🔧 [6/9] 部署 Namespace + Secret + PV..."
 sudo microk8s kubectl apply -f deploy/k8s/namespace.yaml
 sudo microk8s kubectl apply -f deploy/k8s/secret.yaml
 sudo microk8s kubectl apply -f deploy/k8s/pv.yaml
 echo "  ✅ 基礎資源已建立"
 echo ""
 
-# ========== 6. 部署 PostgreSQL ==========
-echo "🐘 [6/8] 部署 PostgreSQL..."
+# ========== 7. 部署 PostgreSQL ==========
+echo "🐘 [7/9] 部署 PostgreSQL..."
 sudo microk8s kubectl apply -f deploy/k8s/postgres.yaml
 echo "  ⏳ 等待 PostgreSQL 就緒..."
 sudo microk8s kubectl wait --for=condition=ready pod -l app=nszpc-postgres -n nszpc --timeout=120s
 echo "  ✅ PostgreSQL 已就緒"
 echo ""
 
-# ========== 7. 部署 App ==========
-echo "🖥️  [7/8] 部署應用程式..."
+# ========== 8. 部署 App ==========
+echo "🖥️  [8/9] 部署 API 應用程式..."
 sudo microk8s kubectl apply -f deploy/k8s/deployment.yaml
 sudo microk8s kubectl apply -f deploy/k8s/service.yaml
-echo "  ⏳ 等待應用程式就緒..."
+echo "  ⏳ 等待 API 就緒..."
 sudo microk8s kubectl wait --for=condition=ready pod -l app=nszpc -n nszpc --timeout=120s
-echo "  ✅ 應用程式已就緒"
+echo "  ✅ API 已就緒"
 echo ""
 
-# ========== 8. 部署 Nginx ==========
-echo "🌐 [8/8] 部署 Nginx 反向代理..."
+# ========== 9. 部署 Nginx ==========
+echo "🌐 [9/9] 部署 Nginx (前端 + 反向代理)..."
 sudo microk8s kubectl apply -f deploy/k8s/nginx-config.yaml
 sudo microk8s kubectl apply -f deploy/k8s/nginx.yaml
 echo "  ⏳ 等待 Nginx 就緒..."
@@ -106,15 +116,14 @@ IP=$(hostname -I | awk '{print $1}')
 echo "========================================="
 echo "  🎉 部署完成！"
 echo ""
-echo "  🌐 存取網址: http://${IP}"
-echo "     (Nginx port 80 → NodePort 30080)"
+echo "  🌐 存取網址: http://${IP}:30080"
 echo ""
 echo "  👤 管理員帳號: admin / admin"
 echo ""
 echo "  📋 常用指令："
-echo "    查看狀態:    sudo microk8s kubectl get all -n nszpc"
-echo "    查看 App 日誌: sudo microk8s kubectl logs -f deploy/nszpc-app -n nszpc"
+echo "    查看狀態:     sudo microk8s kubectl get all -n nszpc"
+echo "    查看 API 日誌: sudo microk8s kubectl logs -f deploy/nszpc-app -n nszpc"
 echo "    查看 Nginx 日誌: sudo microk8s kubectl logs -f deploy/nszpc-nginx -n nszpc"
-echo "    重啟應用:    sudo microk8s kubectl rollout restart deploy/nszpc-app -n nszpc"
-echo "    進入 App:     sudo microk8s kubectl exec -it deploy/nszpc-app -n nszpc -- sh"
+echo "    重啟 API:     sudo microk8s kubectl rollout restart deploy/nszpc-app -n nszpc"
+echo "    重啟前端:     sudo microk8s kubectl rollout restart deploy/nszpc-nginx -n nszpc"
 echo "========================================="

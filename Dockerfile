@@ -10,7 +10,6 @@ RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.json ./
 COPY src/ ./src/
-COPY public/ ./public/
 
 # Build TypeScript
 RUN pnpm build
