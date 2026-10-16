@@ -14,6 +14,10 @@ const router = new Router();
 // 圖片存在 R2（env.UPLOADS），key 是 uploads/<filename>；資料庫 quotation_images.filename 只存 filename
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_IMAGES = 10;
+// 只收這幾種（SVG 可以藏程式碼，不收）；副檔名照格式給，不用使用者的檔名
+const IMAGE_EXT: Record<string, string> = {
+  'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif', 'image/heic': '.heic', 'image/heif': '.heif',
+};
 const FILENAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const uploadKey = (filename: string): string => `uploads/${filename}`;
 
@@ -256,11 +260,11 @@ router.post('/:id/images', async (req: Request, res: Response) => {
   const files = form.getAll('images').filter((f): f is File => typeof f !== 'string');
   if (files.length > MAX_IMAGES) return res.status(400).json({ error: `一次最多 ${MAX_IMAGES} 張` });
   if (files.some((f) => f.size > MAX_IMAGE_BYTES)) return res.status(400).json({ error: '每張圖片最大 10MB' });
-  if (files.some((f) => !f.type.startsWith('image/'))) return res.status(400).json({ error: '只能上傳圖片' });
+  if (files.some((f) => !IMAGE_EXT[f.type])) return res.status(400).json({ error: '只能上傳 JPG、PNG、WebP、GIF、HEIC 圖片' });
 
   const results: any[] = [];
   for (const file of files) {
-    const ext = (file.name.match(/\.[A-Za-z0-9]{1,8}$/)?.[0] ?? '').toLowerCase();
+    const ext = IMAGE_EXT[file.type];
     const filename = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}${ext}`;
     await req.env.UPLOADS.put(uploadKey(filename), file.stream(), { httpMetadata: { contentType: file.type } });
     const { rows } = await pool.query('INSERT INTO quotation_images (quotation_id, filename, original_name) VALUES ($1, $2, $3) RETURNING id', [qId, filename, file.name]);

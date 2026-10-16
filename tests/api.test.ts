@@ -405,6 +405,35 @@ describe('訂單關聯客戶', () => {
   });
 });
 
+describe('資安', () => {
+  it('從其他網站送來會改資料的請求會被擋（CSRF）', async () => {
+    const res = await fetch(new URL('/api/customers', BASE_URL), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'https://evil.example' },
+      body: JSON.stringify({ name: '不該被建立' }),
+    });
+    assert.equal(res.status, 403);
+    const crossSite = await fetch(new URL('/api/customers', BASE_URL), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Sec-Fetch-Site': 'cross-site' },
+      body: 'name=不該被建立',
+    });
+    assert.equal(crossSite.status, 403);
+    // 讀取不受影響
+    const read = await fetch(new URL('/api/customers', BASE_URL), { headers: { Origin: 'https://evil.example' } });
+    assert.equal(read.status, 200);
+  });
+
+  it('不收 SVG（可以藏程式碼）', async () => {
+    const q = await request('POST', '/api/quotations', { customer_name: '資安測試', status: 'draft', items: [] });
+    const form = new FormData();
+    form.append('images', new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'], { type: 'image/svg+xml' }), 'x.svg');
+    const res = await fetch(new URL(`/api/quotations/${q.body.id}/images`, BASE_URL), { method: 'POST', body: form });
+    assert.equal(res.status, 400);
+    await request('DELETE', `/api/quotations/${q.body.id}`);
+  });
+});
+
 describe('Purchases API', () => {
   it('盤商、叫貨、到貨入庫、週／月篩選', async () => {
     const sup = await request('POST', '/api/purchases/suppliers', { name: `測試盤商${unique}`, default_tax_type: 'tax_included' });

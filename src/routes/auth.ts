@@ -90,7 +90,8 @@ router.post('/logout', (_req: Request, res: Response) => {
 
 // ========== 使用者管理 (僅管理員) ==========
 
-function adminOnly(req: Request, res: Response, next: NextFunction): void {
+/** 只有管理員可以（前端藏起來不算，後端也要擋） */
+export function adminOnly(req: Request, res: Response, next: NextFunction): void {
   if (req.user?.role !== 'admin') {
     res.status(403).json({ error: '權限不足' });
     return;

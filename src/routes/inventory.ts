@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from '../lib/router';
+import { adminOnly } from './auth';
 import pool, { stockIn, stockOut, getCostMethod, loadCategories, descendantIds, categoryPath, type CategoryRow } from '../models/database';
 
 const router = new Router();
@@ -19,7 +20,7 @@ router.get('/categories', async (_req: Request, res: Response) => {
   res.json(buildTree(await loadCategories(), null));
 });
 
-router.post('/categories', async (req: Request, res: Response) => {
+router.post('/categories', adminOnly, async (req: Request, res: Response) => {
   const { name, parent_id, icon } = req.body;
   if (!name) return res.status(400).json({ error: '名稱必填' });
   const maxSortResult = parent_id
@@ -34,7 +35,7 @@ router.post('/categories', async (req: Request, res: Response) => {
 
 // 拖拉排序：要放在 /categories/:id 前面（原本放在後面，PUT /categories/reorder 會被當成 id = reorder，排序一直存不進去）
 // 只改同一層的順序；要換上層分類用 PUT /categories/:id 的 parent_id（有檢查）
-router.put('/categories/reorder', async (req: Request, res: Response) => {
+router.put('/categories/reorder', adminOnly, async (req: Request, res: Response) => {
   const { items } = req.body as { items: { id: number; sort_order: number }[] };
   if (!items?.length) return res.status(400).json({ error: '無排序資料' });
   const ids = JSON.stringify(items.map((item) => Number(item.id)));
@@ -53,7 +54,7 @@ router.put('/categories/reorder', async (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
-router.put('/categories/:id', async (req: Request, res: Response) => {
+router.put('/categories/:id', adminOnly, async (req: Request, res: Response) => {
   const catId = parseInt(req.params.id as string);
   const { name, icon, sort_order } = req.body;
   const sets: string[] = []; const params: any[] = [];
@@ -93,7 +94,7 @@ router.put('/categories/:id', async (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
-router.delete('/categories/:id', async (req: Request, res: Response) => {
+router.delete('/categories/:id', adminOnly, async (req: Request, res: Response) => {
   const catId = parseInt(req.params.id as string);
   const allIds = JSON.stringify(descendantIds(await loadCategories(), catId));
   const { rows: [used] } = await pool.query('SELECT COUNT(*) as count FROM inventory WHERE category_id IN (SELECT value FROM json_each($1))', [allIds]);
@@ -108,7 +109,7 @@ router.get('/cost-method', async (_req: Request, res: Response) => {
   res.json({ method: await getCostMethod() });
 });
 
-router.put('/cost-method', async (req: Request, res: Response) => {
+router.put('/cost-method', adminOnly, async (req: Request, res: Response) => {
   const { method } = req.body;
   if (method !== 'fifo' && method !== 'average') return res.status(400).json({ error: '無效的成本方法' });
   await pool.query("INSERT INTO settings (key, value) VALUES ('cost_method', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [method]);

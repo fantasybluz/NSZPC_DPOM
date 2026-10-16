@@ -39,6 +39,14 @@ const json = (status: number, payload: unknown): globalThis.Response =>
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
   });
 
+/** 會改資料的請求（POST/PUT/PATCH/DELETE），而且來源不是自己網站 */
+function isCrossSiteWrite(request: globalThis.Request, url: URL): boolean {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return false;
+  if (request.headers.get('Sec-Fetch-Site') === 'cross-site') return true;
+  const origin = request.headers.get('Origin');
+  return !!origin && origin !== url.origin;
+}
+
 async function readBody(request: globalThis.Request): Promise<any> {
   const type = request.headers.get('Content-Type') || '';
   if (request.method === 'GET' || request.method === 'HEAD') return {};
@@ -58,6 +66,11 @@ async function route(request: globalThis.Request, env: Env): Promise<globalThis.
   // 版本資訊（不需認證）
   if (url.pathname === '/api/version') {
     return json(200, { version: APP_VERSION });
+  }
+
+  // 擋跨站請求（CSRF）：會改資料的請求只接受從自己網站送出的
+  if (isCrossSiteWrite(request, url)) {
+    return json(403, { error: '不接受從其他網站送出的請求' });
   }
 
   let body: any;
