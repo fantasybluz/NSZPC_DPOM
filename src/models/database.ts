@@ -110,6 +110,7 @@ export async function initDatabase(): Promise<void> {
       ship_date TEXT DEFAULT '',
       delivery_status TEXT DEFAULT '',
       qc_data TEXT DEFAULT '{}',
+      stock_deducted INTEGER DEFAULT 0,
       created_at TIMESTAMP DEFAULT NOW(),
       updated_at TIMESTAMP DEFAULT NOW(),
       FOREIGN KEY (customer_id) REFERENCES customers(id)
@@ -124,8 +125,21 @@ export async function initDatabase(): Promise<void> {
       cost INTEGER DEFAULT 0,
       price INTEGER DEFAULT 0,
       quantity INTEGER DEFAULT 1,
+      inventory_id INTEGER,
       FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS quotation_stock_deductions (
+      id SERIAL PRIMARY KEY,
+      quotation_id INTEGER NOT NULL,
+      inventory_id INTEGER NOT NULL,
+      batch_id INTEGER NOT NULL,
+      quantity INTEGER NOT NULL,
+      unit_cost INTEGER NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_qsd_quotation ON quotation_stock_deductions(quotation_id);
 
     CREATE TABLE IF NOT EXISTS quotation_images (
       id SERIAL PRIMARY KEY,
@@ -268,6 +282,10 @@ export async function initDatabase(): Promise<void> {
     );
   `);
 
+  // ========== 補上既有資料表的新欄位（向後相容） ==========
+  await pool.query(`ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS inventory_id INTEGER`);
+  await pool.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS stock_deducted INTEGER DEFAULT 0`);
+
   // ========== 預設分類 ==========
   interface CatDef { name: string; icon?: string; children?: CatDef[] }
 
@@ -403,6 +421,102 @@ export async function stockOut(inventoryId: number, quantity: number, reason: st
 
   await recalcInventory(inventoryId);
   return { totalCost, unitCost };
+}
+
+// ========== 訂單扣帳 / 還原 ==========
+//
+// 「訂單成立」(deposit/pending/completed) 時對 quotation_items.inventory_id 不為 null 的項目
+// 依 FIFO 從庫存批次扣量；逐批次紀錄到 quotation_stock_deductions，
+// 之後狀態回退（draft/cancelled）或刪單時，依紀錄把量加回原批次，
+// 若批次已被刪除（庫存品被刪掉），則改建新批次補回。
+
+export const DEDUCTING_QUOTATION_STATUSES = new Set(['deposit', 'pending', 'completed']);
+export function isDeductingStatus(status: string): boolean {
+  return DEDUCTING_QUOTATION_STATUSES.has(status);
+}
+
+export async function deductQuotationStock(quotationId: number): Promise<void> {
+  const { rows: items } = await pool.query(
+    `SELECT id, inventory_id, name, quantity FROM quotation_items
+     WHERE quotation_id = $1 AND inventory_id IS NOT NULL AND quantity > 0`,
+    [quotationId]
+  );
+  if (!items.length) {
+    await pool.query('UPDATE quotations SET stock_deducted = 1 WHERE id = $1', [quotationId]);
+    return;
+  }
+
+  // 預檢查：合計同一個 inventory_id 的需求量，避免單筆夠但合計不夠
+  const needByInv = new Map<number, number>();
+  for (const it of items) needByInv.set(it.inventory_id, (needByInv.get(it.inventory_id) || 0) + it.quantity);
+  for (const [invId, need] of needByInv) {
+    const { rows } = await pool.query('SELECT name, quantity FROM inventory WHERE id = $1', [invId]);
+    if (!rows.length) continue; // 商品被刪了，跳過（不扣也不報錯）
+    if (rows[0].quantity < need) {
+      throw new Error(`庫存不足：${rows[0].name}（需要 ${need}，目前 ${rows[0].quantity}）`);
+    }
+  }
+
+  for (const item of items) {
+    let remaining: number = item.quantity;
+    const { rows: batches } = await pool.query(
+      'SELECT id, unit_cost, remaining FROM inventory_batches WHERE inventory_id = $1 AND remaining > 0 ORDER BY batch_date ASC, id ASC',
+      [item.inventory_id]
+    );
+    if (!batches.length) continue; // 沒有批次紀錄就跳過
+    for (const batch of batches) {
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, batch.remaining);
+      await pool.query('UPDATE inventory_batches SET remaining = remaining - $1 WHERE id = $2', [take, batch.id]);
+      await pool.query(
+        'INSERT INTO quotation_stock_deductions (quotation_id, inventory_id, batch_id, quantity, unit_cost) VALUES ($1,$2,$3,$4,$5)',
+        [quotationId, item.inventory_id, batch.id, take, batch.unit_cost]
+      );
+      await pool.query(
+        'INSERT INTO inventory_logs (inventory_id, type, change_qty, unit_cost, total_cost, reason, batch_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [item.inventory_id, 'out', -take, batch.unit_cost, take * batch.unit_cost, `訂單扣帳 #${quotationId}`, batch.id]
+      );
+      remaining -= take;
+    }
+    await recalcInventory(item.inventory_id);
+  }
+
+  await pool.query('UPDATE quotations SET stock_deducted = 1 WHERE id = $1', [quotationId]);
+}
+
+export async function restoreQuotationStock(quotationId: number): Promise<void> {
+  const { rows: deductions } = await pool.query(
+    'SELECT * FROM quotation_stock_deductions WHERE quotation_id = $1',
+    [quotationId]
+  );
+  if (!deductions.length) {
+    await pool.query('UPDATE quotations SET stock_deducted = 0 WHERE id = $1', [quotationId]);
+    return;
+  }
+
+  const inventoryIds = new Set<number>();
+  for (const d of deductions) {
+    const { rows: batchRows } = await pool.query('SELECT id FROM inventory_batches WHERE id = $1', [d.batch_id]);
+    if (batchRows.length) {
+      await pool.query('UPDATE inventory_batches SET remaining = remaining + $1 WHERE id = $2', [d.quantity, d.batch_id]);
+      await pool.query(
+        'INSERT INTO inventory_logs (inventory_id, type, change_qty, unit_cost, total_cost, reason, batch_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+        [d.inventory_id, 'in', d.quantity, d.unit_cost, d.quantity * d.unit_cost, `訂單還原 #${quotationId}`, d.batch_id]
+      );
+    } else {
+      // 原批次已不存在，改建新批次補回
+      const { rows: invRows } = await pool.query('SELECT id FROM inventory WHERE id = $1', [d.inventory_id]);
+      if (invRows.length) {
+        await stockIn(d.inventory_id, d.quantity, d.unit_cost, '', `訂單還原 #${quotationId}`);
+      }
+    }
+    inventoryIds.add(d.inventory_id);
+  }
+  for (const invId of inventoryIds) {
+    await recalcInventory(invId);
+  }
+  await pool.query('DELETE FROM quotation_stock_deductions WHERE quotation_id = $1', [quotationId]);
+  await pool.query('UPDATE quotations SET stock_deducted = 0 WHERE id = $1', [quotationId]);
 }
 
 export async function recalcInventory(inventoryId: number): Promise<void> {

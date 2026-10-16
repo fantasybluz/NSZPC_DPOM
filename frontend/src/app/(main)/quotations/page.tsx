@@ -36,6 +36,7 @@ interface QuotItem {
   cost: number;
   price: number;
   quantity: number;
+  inventory_id?: number | null;
 }
 
 interface QuotImage {
@@ -75,6 +76,17 @@ interface Customer {
 interface CatNode {
   name: string;
   children?: CatNode[];
+}
+
+interface InvItem {
+  id: number;
+  category_name: string;
+  name: string;
+  brand: string;
+  spec: string;
+  price: number;
+  quantity: number;
+  avg_cost: number;
 }
 
 // ===== Component =====
@@ -121,6 +133,10 @@ export default function QuotationsPage() {
   // Category tree
   const [catTree, setCatTree] = useState<CatNode[]>([]);
 
+  // Inventory items (for 品名 autocomplete)
+  const [inventoryItems, setInventoryItems] = useState<InvItem[]>([]);
+  const [itemDropdownIdx, setItemDropdownIdx] = useState<number | null>(null);
+
   // Delete confirm modal
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
@@ -159,6 +175,17 @@ export default function QuotationsPage() {
       if (custSearchRef.current && !custSearchRef.current.contains(e.target as Node)) {
         setCustDropdownOpen(false);
       }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Close inventory dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('[data-inv-search]') || target.closest('[data-inv-dropdown]')) return;
+      setItemDropdownIdx(null);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -225,13 +252,16 @@ export default function QuotationsPage() {
   // ===== Actions =====
 
   const openForm = async (quot?: Quotation) => {
-    // Load categories and customers in parallel
-    const [cats, custs] = await Promise.all([
+    // Load categories, customers and inventory items in parallel
+    const [cats, custs, invs] = await Promise.all([
       api.get<CatNode[]>('/inventory/categories').catch(() => []),
       api.get<Customer[]>('/customers').catch(() => []),
+      api.get<InvItem[]>('/inventory').catch(() => []),
     ]);
     setCatTree(cats);
     setCustomers(custs);
+    setInventoryItems(invs);
+    setItemDropdownIdx(null);
 
     if (quot) {
       setEditQuot(quot);
@@ -246,7 +276,7 @@ export default function QuotationsPage() {
       setFormShipDate(quot.ship_date || '');
       setFormDeliveryStatus(quot.delivery_status || '');
       setFormNote(quot.note || '');
-      setFormItems(quot.items?.length ? quot.items.map(i => ({ ...i })) : [{ category: '', name: '', spec: '', cost: 0, price: 0, quantity: 1 }]);
+      setFormItems(quot.items?.length ? quot.items.map(i => ({ ...i, inventory_id: i.inventory_id ?? null })) : [{ category: '', name: '', spec: '', cost: 0, price: 0, quantity: 1, inventory_id: null }]);
       setFormImages(quot.images || []);
     } else {
       const defaultCat = cats[0]?.children?.[0]?.name || cats[0]?.name || '';
@@ -262,7 +292,7 @@ export default function QuotationsPage() {
       setFormShipDate('');
       setFormDeliveryStatus('');
       setFormNote('');
-      setFormItems([{ category: defaultCat, name: '', spec: '', cost: 0, price: 0, quantity: 1 }]);
+      setFormItems([{ category: defaultCat, name: '', spec: '', cost: 0, price: 0, quantity: 1, inventory_id: null }]);
       setFormImages([]);
     }
     setCustDropdownOpen(false);
@@ -277,7 +307,15 @@ export default function QuotationsPage() {
   };
 
   const handleSave = async () => {
-    const validItems = formItems.filter(i => i.name.trim());
+    const validItems = formItems.filter(i => i.name.trim()).map(i => ({
+      category: i.category,
+      name: i.name,
+      spec: i.spec,
+      cost: i.cost,
+      price: i.price,
+      quantity: i.quantity,
+      inventory_id: i.inventory_id ?? null,
+    }));
     const data = {
       customer_id: formCustomerId || null,
       customer_name: formCustomerName,
@@ -591,13 +629,56 @@ ${q.note ? `<div class="note"><strong>備註:</strong> ${q.note}</div>` : ''}
     });
   };
 
+  // Check if a category name exists as a leaf in catTree
+  const catExists = (name: string): boolean => {
+    for (const p of catTree) {
+      if (p.children?.length) {
+        if (p.children.some(c => c.name === name)) return true;
+      } else if (p.name === name) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const selectInvItem = (idx: number, inv: InvItem) => {
+    setFormItems(prev => {
+      const next = [...prev];
+      const fullName = inv.brand ? `${inv.brand} ${inv.name}` : inv.name;
+      next[idx] = {
+        ...next[idx],
+        category: catExists(inv.category_name) ? inv.category_name : next[idx].category,
+        name: fullName,
+        spec: inv.spec || '',
+        cost: Math.round(inv.avg_cost || 0),
+        price: inv.price || 0,
+        inventory_id: inv.id,
+      };
+      return next;
+    });
+    setItemDropdownIdx(null);
+  };
+
+  const filteredInv = (() => {
+    if (itemDropdownIdx === null) return [];
+    const row = formItems[itemDropdownIdx];
+    if (!row) return [];
+    const q = (row.name || '').trim().toLowerCase();
+    if (!q) return [];
+    return inventoryItems.filter(i =>
+      i.name.toLowerCase().includes(q) ||
+      (i.brand || '').toLowerCase().includes(q) ||
+      (i.spec || '').toLowerCase().includes(q)
+    ).slice(0, 10);
+  })();
+
   const removeItem = (idx: number) => {
     setFormItems(prev => prev.filter((_, i) => i !== idx));
   };
 
   const addItem = () => {
     const defaultCat = catTree[0]?.children?.[0]?.name || catTree[0]?.name || '';
-    setFormItems(prev => [...prev, { category: defaultCat, name: '', spec: '', cost: 0, price: 0, quantity: 1 }]);
+    setFormItems(prev => [...prev, { category: defaultCat, name: '', spec: '', cost: 0, price: 0, quantity: 1, inventory_id: null }]);
   };
 
   // Drag and drop for items
@@ -911,7 +992,55 @@ ${q.note ? `<div class="note"><strong>備註:</strong> ${q.note}</div>` : ''}
                       {buildCatOptions(item.category)}
                     </select>
                   </td>
-                  <td><input type="text" className="form-control form-control-sm" value={item.name} placeholder="品名" onChange={e => updateItem(idx, 'name', e.target.value)} /></td>
+                  <td>
+                    <div className="position-relative" data-inv-search>
+                      <div className="input-group input-group-sm">
+                        {item.inventory_id != null && (
+                          <span className="input-group-text" title="已連結庫存（成立時會扣帳）" style={{ padding: '0 6px' }}>
+                            <i className="bi bi-link-45deg text-success" />
+                          </span>
+                        )}
+                        <input
+                          type="text"
+                          className="form-control form-control-sm"
+                          value={item.name}
+                          placeholder="品名（可搜尋庫存）"
+                          autoComplete="off"
+                          onChange={e => {
+                            const val = e.target.value;
+                            setFormItems(prev => {
+                              const next = [...prev];
+                              next[idx] = { ...next[idx], name: val, inventory_id: null };
+                              return next;
+                            });
+                            setItemDropdownIdx(val.trim() ? idx : null);
+                          }}
+                          onFocus={() => { if (item.name.trim()) setItemDropdownIdx(idx); }}
+                        />
+                      </div>
+                      {itemDropdownIdx === idx && filteredInv.length > 0 && (
+                        <div
+                          className="dropdown-menu show"
+                          data-inv-dropdown
+                          style={{ maxHeight: 240, overflowY: 'auto', minWidth: 320 }}
+                        >
+                          {filteredInv.map(inv => (
+                            <button
+                              key={inv.id}
+                              type="button"
+                              className="dropdown-item"
+                              onClick={() => selectInvItem(idx, inv)}
+                            >
+                              <div><strong>{inv.brand ? `${inv.brand} ` : ''}{inv.name}</strong></div>
+                              <div className="small text-muted">
+                                {inv.category_name}{inv.spec ? ` · ${inv.spec}` : ''} · 庫存 {inv.quantity} · ${Fmt.currency(inv.price)}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </td>
                   <td><input type="text" className="form-control form-control-sm" value={item.spec} placeholder="規格" onChange={e => updateItem(idx, 'spec', e.target.value)} /></td>
                   <td><input type="number" className="form-control form-control-sm" value={item.cost} min={0} onChange={e => updateItem(idx, 'cost', parseInt(e.target.value) || 0)} /></td>
                   <td><input type="number" className="form-control form-control-sm" value={item.price} min={0} onChange={e => updateItem(idx, 'price', parseInt(e.target.value) || 0)} /></td>

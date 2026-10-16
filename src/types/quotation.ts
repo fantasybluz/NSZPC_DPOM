@@ -32,6 +32,7 @@ export interface QuotationItem {
   cost: number;
   price: number;
   quantity: number;
+  inventory_id?: number | null;
 }
 
 export interface QuotationImage {

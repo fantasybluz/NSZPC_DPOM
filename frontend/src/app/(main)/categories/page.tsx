@@ -31,10 +31,10 @@ export default function CategoriesPage() {
   const { isAdmin } = useAuth();
   const { showToast } = useToast();
 
-  // Drag state
-  const dragItem = useRef<{ id: number; depth: number; parentId: number | null } | null>(null);
+  // Drag state: top=插入上方, bottom=插入下方, middle=變成子分類
+  const dragItem = useRef<{ id: number; parentId: number | null } | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
-  const [dragPosition, setDragPosition] = useState<'top' | 'bottom' | null>(null);
+  const [dragPosition, setDragPosition] = useState<'top' | 'middle' | 'bottom' | null>(null);
 
   const loadTree = useCallback(async () => {
     try {
@@ -103,13 +103,32 @@ export default function CategoriesPage() {
   };
 
   // ========== Drag & Drop ==========
+  // top/bottom = 插入目標的上方/下方（同層排序）
+  // middle = 變成目標的子分類
 
-  const handleDragStart = (e: React.DragEvent, node: Category, depth: number) => {
-    dragItem.current = { id: node.id, depth, parentId: node.parent_id };
+  // 遞迴檢查是否為某節點的子孫（防止拖到自己的子分類底下造成循環）
+  const isDescendant = (nodes: Category[], ancestorId: number, targetId: number): boolean => {
+    for (const n of nodes) {
+      if (n.id === ancestorId) {
+        const check = (children: Category[] | undefined): boolean => {
+          if (!children) return false;
+          for (const c of children) {
+            if (c.id === targetId) return true;
+            if (check(c.children)) return true;
+          }
+          return false;
+        };
+        return check(n.children);
+      }
+      if (n.children && isDescendant(n.children, ancestorId, targetId)) return true;
+    }
+    return false;
+  };
+
+  const handleDragStart = (e: React.DragEvent, node: Category) => {
+    dragItem.current = { id: node.id, parentId: node.parent_id };
     e.dataTransfer.effectAllowed = 'move';
-    // Make the dragged element semi-transparent
-    const el = e.currentTarget as HTMLElement;
-    setTimeout(() => el.style.opacity = '0.4', 0);
+    setTimeout(() => (e.target as HTMLElement).style.opacity = '0.4', 0);
   };
 
   const handleDragEnd = (e: React.DragEvent) => {
@@ -119,19 +138,23 @@ export default function CategoriesPage() {
     setDragPosition(null);
   };
 
-  const handleDragOver = (e: React.DragEvent, node: Category, depth: number) => {
+  const handleDragOver = (e: React.DragEvent, node: Category) => {
     if (!dragItem.current) return;
-    // Only allow same-level drag (same depth & same parent)
-    if (dragItem.current.depth !== depth) return;
-    if (dragItem.current.parentId !== node.parent_id) return;
     if (dragItem.current.id === node.id) return;
+    // 不能拖到自己的子孫底下
+    if (isDescendant(tree, dragItem.current.id, node.id)) return;
 
     e.preventDefault();
     e.stopPropagation();
 
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const mid = rect.top + rect.height / 2;
-    const pos = e.clientY < mid ? 'top' : 'bottom';
+    const h = rect.height;
+    const y = e.clientY - rect.top;
+    // 三區域: 上 25% = top, 中間 50% = middle, 下 25% = bottom
+    let pos: 'top' | 'middle' | 'bottom';
+    if (y < h * 0.25) pos = 'top';
+    else if (y > h * 0.75) pos = 'bottom';
+    else pos = 'middle';
 
     setDragOverId(node.id);
     setDragPosition(pos);
@@ -142,49 +165,89 @@ export default function CategoriesPage() {
     setDragPosition(null);
   };
 
-  const handleDrop = async (e: React.DragEvent, targetNode: Category, depth: number) => {
+  // 從樹中移除某節點，回傳 [新樹, 被移除的節點]
+  const removeFromTree = (nodes: Category[], id: number): [Category[], Category | null] => {
+    let removed: Category | null = null;
+    const result = nodes.filter(n => {
+      if (n.id === id) { removed = n; return false; }
+      return true;
+    }).map(n => {
+      if (removed) return n; // 已經找到了
+      if (!n.children) return n;
+      const [newChildren, r] = removeFromTree(n.children, id);
+      if (r) removed = r;
+      return { ...n, children: newChildren.length > 0 ? newChildren : undefined };
+    });
+    return [result, removed];
+  };
+
+  // 在樹中的目標位置插入節點
+  const insertIntoTree = (
+    nodes: Category[],
+    targetId: number,
+    movedNode: Category,
+    position: 'top' | 'middle' | 'bottom'
+  ): Category[] => {
+    if (position === 'middle') {
+      // 變成目標的子分類
+      return nodes.map(n => {
+        if (n.id === targetId) {
+          const children = n.children ? [...n.children, { ...movedNode, parent_id: n.id, children: movedNode.children }] : [{ ...movedNode, parent_id: n.id, children: movedNode.children }];
+          return { ...n, children };
+        }
+        if (n.children) return { ...n, children: insertIntoTree(n.children, targetId, movedNode, position) };
+        return n;
+      });
+    }
+
+    // top/bottom: 插入同層
+    const result: Category[] = [];
+    for (const n of nodes) {
+      if (n.id === targetId) {
+        const inserted = { ...movedNode, parent_id: n.parent_id, children: movedNode.children };
+        if (position === 'top') { result.push(inserted); result.push(n); }
+        else { result.push(n); result.push(inserted); }
+      } else {
+        if (n.children) {
+          result.push({ ...n, children: insertIntoTree(n.children, targetId, movedNode, position) });
+        } else {
+          result.push(n);
+        }
+      }
+    }
+    return result;
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetNode: Category) => {
     e.preventDefault();
     e.stopPropagation();
+
+    const pos = dragPosition;
     setDragOverId(null);
     setDragPosition(null);
 
-    if (!dragItem.current) return;
-    if (dragItem.current.depth !== depth) return;
-    if (dragItem.current.parentId !== targetNode.parent_id) return;
+    if (!dragItem.current || !pos) return;
     if (dragItem.current.id === targetNode.id) return;
+    if (isDescendant(tree, dragItem.current.id, targetNode.id)) return;
 
-    // Reorder in the tree
-    const reorderSiblings = (nodes: Category[]): Category[] => {
-      const siblings = [...nodes];
-      const dragIdx = siblings.findIndex(n => n.id === dragItem.current!.id);
-      const targetIdx = siblings.findIndex(n => n.id === targetNode.id);
-      if (dragIdx === -1 || targetIdx === -1) return siblings;
+    // 1. 從樹中移除被拖的節點
+    const [treeWithout, moved] = removeFromTree(tree, dragItem.current.id);
+    if (!moved) return;
 
-      const [moved] = siblings.splice(dragIdx, 1);
-      const insertIdx = dragPosition === 'top'
-        ? siblings.findIndex(n => n.id === targetNode.id)
-        : siblings.findIndex(n => n.id === targetNode.id) + 1;
-      siblings.splice(insertIdx, 0, moved);
-      return siblings;
-    };
-
-    // Find the right level and reorder
-    const reorderTree = (nodes: Category[]): Category[] => {
-      // Check if the target is at this level
-      if (nodes.some(n => n.id === targetNode.id)) {
-        return reorderSiblings(nodes);
-      }
-      // Recurse into children
-      return nodes.map(n => ({
-        ...n,
-        children: n.children ? reorderTree(n.children) : undefined,
-      }));
-    };
-
-    const newTree = reorderTree(tree);
+    // 2. 插入到目標位置
+    const newTree = insertIntoTree(treeWithout, targetNode.id, moved, pos);
     setTree(newTree);
 
-    // Save to backend
+    // 3. 展開目標（如果是放到 middle）
+    if (pos === 'middle') {
+      setCollapsed(prev => {
+        const next = new Set(prev);
+        next.delete(targetNode.id);
+        return next;
+      });
+    }
+
+    // 4. 儲存到後端
     const items: { id: number; sort_order: number; parent_id: number | null }[] = [];
     const collect = (nodes: Category[], pid: number | null) => {
       nodes.forEach((n, idx) => {
@@ -196,11 +259,11 @@ export default function CategoriesPage() {
 
     try {
       await api.put('/inventory/categories/reorder', { items });
-      showToast('排序已更新');
+      showToast(pos === 'middle' ? '已移至子分類' : '排序已更新');
       loadTree();
     } catch (err: any) {
       showToast(err.message, 'danger');
-      loadTree(); // revert
+      loadTree();
     }
   };
 
@@ -215,13 +278,13 @@ export default function CategoriesPage() {
     return (
       <div
         key={node.id}
-        className={`cat-node ${isDragOver && dragPosition === 'top' ? 'drag-over-top' : ''} ${isDragOver && dragPosition === 'bottom' ? 'drag-over-bottom' : ''}`}
+        className={`cat-node ${isDragOver && dragPosition === 'top' ? 'drag-over-top' : ''} ${isDragOver && dragPosition === 'bottom' ? 'drag-over-bottom' : ''} ${isDragOver && dragPosition === 'middle' ? 'drag-over-middle' : ''}`}
         draggable
-        onDragStart={e => handleDragStart(e, node, depth)}
+        onDragStart={e => handleDragStart(e, node)}
         onDragEnd={handleDragEnd}
-        onDragOver={e => handleDragOver(e, node, depth)}
+        onDragOver={e => handleDragOver(e, node)}
         onDragLeave={handleDragLeave}
-        onDrop={e => handleDrop(e, node, depth)}
+        onDrop={e => handleDrop(e, node)}
       >
         <div className="cat-node-header" style={{ paddingLeft: 12 + depth * 24 }}>
           <div className="d-flex align-items-center gap-2">

@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import pool from '../models/database';
+import pool, { deductQuotationStock, restoreQuotationStock, isDeductingStatus } from '../models/database';
 import type { Quotation, QuotationItem, QuotationImage } from '../types';
 
 const router = Router();
@@ -104,8 +104,9 @@ router.get('/:id', async (req: Request, res: Response) => {
 
 // 新增
 router.post('/', async (req: Request, res: Response) => {
-  const { customer_id, customer_name, items, deposit, service_fee, note, item_title, demand_area, ship_date, delivery_status, qc_data } = req.body;
+  const { customer_id, customer_name, items, status, deposit, service_fee, note, item_title, demand_area, ship_date, delivery_status, qc_data } = req.body;
   const quotation_no = await generateQuotationNo();
+  const initStatus = status && typeof status === 'string' ? status : 'draft';
 
   let total_cost = 0, total_price = 0;
   if (items) {
@@ -118,23 +119,43 @@ router.post('/', async (req: Request, res: Response) => {
 
   const { rows } = await pool.query(`
     INSERT INTO quotations (quotation_no, customer_id, customer_name, status, deposit, service_fee, total_cost, total_price, note, item_title, demand_area, ship_date, delivery_status, qc_data)
-    VALUES ($1, $2, $3, 'draft', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id
-  `, [quotation_no, customer_id || null, customer_name || '', deposit || 0, service_fee || 0, total_cost, total_price, note || '',
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id
+  `, [quotation_no, customer_id || null, customer_name || '', initStatus, deposit || 0, service_fee || 0, total_cost, total_price, note || '',
     item_title || '', demand_area || '', ship_date || '', delivery_status || '', JSON.stringify(qc_data || {})]);
 
   const qId = rows[0].id;
   if (items?.length) {
     for (const item of items) {
-      await pool.query('INSERT INTO quotation_items (quotation_id, category, name, spec, cost, price, quantity) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-        [qId, item.category || '', item.name, item.spec || '', item.cost || 0, item.price || 0, item.quantity || 1]);
+      await pool.query('INSERT INTO quotation_items (quotation_id, category, name, spec, cost, price, quantity, inventory_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+        [qId, item.category || '', item.name, item.spec || '', item.cost || 0, item.price || 0, item.quantity || 1, item.inventory_id || null]);
     }
   }
+
+  // 若初始狀態就是「成立」，立即扣帳
+  if (isDeductingStatus(initStatus)) {
+    try {
+      await deductQuotationStock(qId);
+    } catch (err: any) {
+      // 回滾整張單，避免半成品狀態
+      await pool.query('DELETE FROM quotation_items WHERE quotation_id = $1', [qId]);
+      await pool.query('DELETE FROM quotations WHERE id = $1', [qId]);
+      return res.status(400).json({ error: err.message || '庫存扣帳失敗' });
+    }
+  }
+
   res.json({ id: qId, quotation_no });
 });
 
 // 更新
 router.put('/:id', async (req: Request, res: Response) => {
   const { customer_id, customer_name, items, deposit, service_fee, status, note, item_title, demand_area, ship_date, delivery_status, qc_data } = req.body;
+  const qId = parseInt(req.params.id as string);
+  const newStatus = status || 'draft';
+
+  // 讀目前狀態與扣帳旗標
+  const { rows: curRows } = await pool.query('SELECT status, stock_deducted FROM quotations WHERE id = $1', [qId]);
+  if (!curRows.length) return res.status(404).json({ error: '找不到訂單' });
+  const wasDeducted = curRows[0].stock_deducted === 1;
 
   let total_cost = 0, total_price = 0;
   if (items) {
@@ -145,20 +166,39 @@ router.put('/:id', async (req: Request, res: Response) => {
   }
   total_price += (service_fee || 0);
 
+  // 1) 若先前已扣帳，先還原（此步永遠安全）
+  if (wasDeducted) {
+    await restoreQuotationStock(qId);
+  }
+
+  // 2) 替換 items
+  await pool.query('DELETE FROM quotation_items WHERE quotation_id = $1', [qId]);
+  if (items?.length) {
+    for (const item of items) {
+      await pool.query('INSERT INTO quotation_items (quotation_id, category, name, spec, cost, price, quantity, inventory_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+        [qId, item.category || '', item.name, item.spec || '', item.cost || 0, item.price || 0, item.quantity || 1, item.inventory_id || null]);
+    }
+  }
+
+  // 3) 更新主表
   await pool.query(`
     UPDATE quotations SET customer_id=$1, customer_name=$2, status=$3, deposit=$4, service_fee=$5, total_cost=$6, total_price=$7, note=$8,
     item_title=$9, demand_area=$10, ship_date=$11, delivery_status=$12, qc_data=$13,
     updated_at=NOW() WHERE id=$14
-  `, [customer_id || null, customer_name || '', status || 'draft', deposit || 0, service_fee || 0, total_cost, total_price, note || '',
-    item_title || '', demand_area || '', ship_date || '', delivery_status || '', JSON.stringify(qc_data || {}), req.params.id]);
+  `, [customer_id || null, customer_name || '', newStatus, deposit || 0, service_fee || 0, total_cost, total_price, note || '',
+    item_title || '', demand_area || '', ship_date || '', delivery_status || '', JSON.stringify(qc_data || {}), qId]);
 
-  await pool.query('DELETE FROM quotation_items WHERE quotation_id = $1', [req.params.id]);
-  if (items?.length) {
-    for (const item of items) {
-      await pool.query('INSERT INTO quotation_items (quotation_id, category, name, spec, cost, price, quantity) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-        [req.params.id, item.category || '', item.name, item.spec || '', item.cost || 0, item.price || 0, item.quantity || 1]);
+  // 4) 若新狀態為「成立」，依新 items 扣帳；若庫存不足，把狀態回退並回原扣帳狀態
+  if (isDeductingStatus(newStatus)) {
+    try {
+      await deductQuotationStock(qId);
+    } catch (err: any) {
+      // 回退狀態為 draft，回應錯誤
+      await pool.query("UPDATE quotations SET status = 'draft', updated_at = NOW() WHERE id = $1", [qId]);
+      return res.status(400).json({ error: err.message || '庫存扣帳失敗，狀態已回退為草稿' });
     }
   }
+
   res.json({ success: true });
 });
 
@@ -175,8 +215,8 @@ router.post('/:id/copy', async (req: Request, res: Response) => {
   );
   const newId = newRows[0].id;
   for (const item of origItems) {
-    await pool.query('INSERT INTO quotation_items (quotation_id, category, name, spec, cost, price, quantity) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [newId, item.category, item.name, item.spec, item.cost, item.price, item.quantity]);
+    await pool.query('INSERT INTO quotation_items (quotation_id, category, name, spec, cost, price, quantity, inventory_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [newId, item.category, item.name, item.spec, item.cost, item.price, item.quantity, item.inventory_id || null]);
   }
   res.json({ id: newId, quotation_no: newNo });
 });
@@ -216,14 +256,21 @@ router.delete('/:id/images/:imageId', async (req: Request, res: Response) => {
 
 // 刪除估價單
 router.delete('/:id', async (req: Request, res: Response) => {
-  const { rows: images } = await pool.query('SELECT filename FROM quotation_images WHERE quotation_id = $1', [req.params.id]);
+  const qId = parseInt(req.params.id as string);
+  // 若已扣帳，先還原庫存
+  const { rows: cur } = await pool.query('SELECT stock_deducted FROM quotations WHERE id = $1', [qId]);
+  if (cur[0]?.stock_deducted === 1) {
+    await restoreQuotationStock(qId);
+  }
+
+  const { rows: images } = await pool.query('SELECT filename FROM quotation_images WHERE quotation_id = $1', [qId]);
   for (const img of images) {
     const filePath = path.join(uploadDir, img.filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   }
-  await pool.query('DELETE FROM quotation_images WHERE quotation_id = $1', [req.params.id]);
-  await pool.query('DELETE FROM quotation_items WHERE quotation_id = $1', [req.params.id]);
-  await pool.query('DELETE FROM quotations WHERE id = $1', [req.params.id]);
+  await pool.query('DELETE FROM quotation_images WHERE quotation_id = $1', [qId]);
+  await pool.query('DELETE FROM quotation_items WHERE quotation_id = $1', [qId]);
+  await pool.query('DELETE FROM quotations WHERE id = $1', [qId]);
   res.json({ success: true });
 });
 
