@@ -11,6 +11,14 @@ import BootstrapClient from '@/components/BootstrapClient';
 export const metadata: Metadata = {
   title: '星辰電腦管理系統',
   description: 'NSZPC 星辰電腦內部管理系統',
+  // 跟官網同一套 NSZ 立方體圖示；?v= 是讓瀏覽器丟掉以前快取的圖示，換圖時加一
+  icons: {
+    icon: [
+      { url: '/favicon.ico?v=3', sizes: '16x16 32x32 48x48' },
+      { url: '/favicon-32.png?v=3', type: 'image/png', sizes: '32x32' },
+    ],
+    apple: '/apple-touch-icon.png?v=3',
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
