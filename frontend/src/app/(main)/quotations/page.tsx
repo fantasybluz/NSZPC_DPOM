@@ -6,6 +6,7 @@ import { useToast } from '@/contexts/ToastContext';
 import Modal from '@/components/ui/Modal';
 import PaginationComp from '@/components/ui/Pagination';
 import * as Fmt from '@/lib/format';
+import QuoteDocModal, { type QuoteDocData } from '@/components/QuoteDocModal';
 
 // ===== Constants =====
 
@@ -103,6 +104,9 @@ export default function QuotationsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // 產出報價單（A4 預覽、PDF / JPG / 貼 LINE 的圖片）
+  const [quoteDoc, setQuoteDoc] = useState<QuoteDocData | null>(null);
 
   // Detail modal
   const [detailOpen, setDetailOpen] = useState(false);
@@ -416,7 +420,7 @@ export default function QuotationsPage() {
     } catch (err: any) { showToast(err.message, 'danger'); }
   };
 
-  // Export quotation (print)
+  // 產出報價單：讀訂單和客戶資料，打開 QuoteDocModal（原本是開新視窗列印一張簡單的表）
   const exportQuotation = async (id: number) => {
     try {
       const q = await api.get<Quotation>(`/quotations/${id}`);
@@ -429,57 +433,21 @@ export default function QuotationsPage() {
           custAddr = [cust.city, cust.district, cust.address].filter(Boolean).join('');
           custPhone = cust.phone || '';
           custName = cust.name || custName;
-        } catch { /* ignore */ }
+        } catch { /* 客戶被刪了就用訂單上的名字 */ }
       }
-
-      const printWindow = window.open('', '_blank');
-      if (!printWindow) return;
-      printWindow.document.write(`<!DOCTYPE html>
-<html lang="zh-TW"><head><meta charset="UTF-8">
-<title>訂單${q.quotation_no}</title>
-<style>
-  body { font-family: -apple-system, 'Microsoft JhengHei', sans-serif; padding: 40px; color: #333; }
-  h1 { text-align: center; margin-bottom: 5px; }
-  .info { display: flex; justify-content: space-between; margin: 20px 0; }
-  table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-  th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
-  th { background: #f5f5f5; }
-  .text-right { text-align: right; }
-  .total-row { font-weight: bold; background: #f9f9f9; }
-  .footer { margin-top: 40px; text-align: center; color: #999; font-size: 12px; }
-  .note { margin-top: 20px; padding: 10px; background: #f9f9f9; border-radius: 4px; }
-  @media print { body { padding: 20px; } }
-</style></head><body>
-<h1>估價單</h1>
-<p style="text-align:center;color:#666">訂單號: ${q.quotation_no}</p>
-<div class="info">
-  <div><strong>客戶:</strong> ${custName || '-'}</div>
-  <div><strong>日期:</strong> ${Fmt.date(q.created_at)}</div>
-</div>
-${(custPhone || custAddr) ? `<div class="info" style="margin-top:0;">
-  ${custPhone ? `<div><strong>電話:</strong> ${custPhone}</div>` : ''}
-  ${custAddr ? `<div><strong>配送地址:</strong> ${custAddr}</div>` : ''}
-</div>` : ''}
-<table>
-  <thead><tr><th>#</th><th>分類</th><th>品名</th><th>規格</th><th class="text-right">單價</th><th class="text-right">數量</th><th class="text-right">小計</th></tr></thead>
-  <tbody>
-    ${(q.items || []).map((i, idx) => `
-    <tr><td>${idx + 1}</td><td>${i.category}</td><td>${i.name}</td><td>${i.spec}</td>
-    <td class="text-right">$${Fmt.currency(i.price)}</td><td class="text-right">${i.quantity}</td>
-    <td class="text-right">$${Fmt.currency(i.price * i.quantity)}</td></tr>`).join('')}
-  </tbody>
-  <tfoot>
-    ${q.service_fee ? `<tr><td colspan="6" class="text-right">服務費</td><td class="text-right">$${Fmt.currency(q.service_fee)}</td></tr>` : ''}
-    <tr class="total-row"><td colspan="6" class="text-right">總計</td><td class="text-right">$${Fmt.currency(q.total_price)}</td></tr>
-    ${q.deposit ? `<tr><td colspan="6" class="text-right">已付訂金</td><td class="text-right">$${Fmt.currency(q.deposit)}</td></tr>
-    <tr class="total-row"><td colspan="6" class="text-right">尚需付款</td><td class="text-right">$${Fmt.currency(q.total_price - q.deposit)}</td></tr>` : ''}
-  </tfoot>
-</table>
-${q.note ? `<div class="note"><strong>備註:</strong> ${q.note}</div>` : ''}
-<div class="footer">此估價單有效期限為 7 天</div>
-</body></html>`);
-      printWindow.document.close();
-      setTimeout(() => printWindow.print(), 500);
+      setQuoteDoc({
+        quotation_no: q.quotation_no,
+        created_at: q.created_at,
+        customer_name: custName,
+        customer_phone: custPhone,
+        customer_address: custAddr,
+        item_title: q.item_title,
+        service_fee: q.service_fee || 0,
+        deposit: q.deposit || 0,
+        total_price: q.total_price || 0,
+        note: q.note || '',
+        items: (q.items || []).map((i) => ({ category: i.category, name: i.name, spec: i.spec, price: i.price, quantity: i.quantity })),
+      });
     } catch (err: any) { showToast(err.message, 'danger'); }
   };
 
@@ -774,7 +742,7 @@ ${q.note ? `<div class="note"><strong>備註:</strong> ${q.note}</div>` : ''}
                     <td className="text-nowrap">
                       <button className="btn btn-sm btn-outline-primary" onClick={() => viewQuotation(q.id)} title="檢視"><i className="bi bi-eye" /></button>
                       <button className="btn btn-sm btn-outline-secondary ms-1" onClick={() => editQuotation(q.id)} title="編輯"><i className="bi bi-pencil" /></button>
-                      <button className="btn btn-sm btn-outline-success ms-1" onClick={() => exportQuotation(q.id)} title="匯出訂單"><i className="bi bi-download" /></button>
+                      <button className="btn btn-sm btn-outline-success ms-1" onClick={() => exportQuotation(q.id)} title="產出報價單"><i className="bi bi-file-earmark-text" /></button>
                       <button className="btn btn-sm btn-outline-warning ms-1" onClick={() => exportQC(q.id)} title="出機檢查單"><i className="bi bi-clipboard-check" /></button>
                       <button className="btn btn-sm btn-outline-info ms-1" onClick={() => copyQuotation(q.id)} title="複製訂單"><i className="bi bi-copy" /></button>
                       <button className="btn btn-sm btn-outline-danger ms-1" onClick={() => confirmDelete(q.id)} title="刪除"><i className="bi bi-trash" /></button>
@@ -791,8 +759,17 @@ ${q.note ? `<div class="note"><strong>備註:</strong> ${q.note}</div>` : ''}
         onPageChange={setPage} onPageSizeChange={s => { setPageSize(s); setPage(1); }} />
 
       {/* ===== Detail Modal ===== */}
+      <QuoteDocModal data={quoteDoc} onClose={() => setQuoteDoc(null)} />
+
       <Modal show={detailOpen} onClose={() => setDetailOpen(false)} title={detail ? `訂單${detail.quotation_no}` : ''} size="lg"
-        footer={<button className="btn btn-secondary" onClick={() => setDetailOpen(false)}>關閉</button>}>
+        footer={<>
+          {detail && (
+            <button className="btn btn-primary" onClick={() => { setDetailOpen(false); exportQuotation(detail.id); }}>
+              <i className="bi bi-file-earmark-text" /> 產出報價單
+            </button>
+          )}
+          <button className="btn btn-secondary" onClick={() => setDetailOpen(false)}>關閉</button>
+        </>}>
         {detail && (() => {
           const profit = detail.total_price - detail.total_cost;
           const margin = detail.total_price > 0 ? (profit / detail.total_price * 100) : 0;

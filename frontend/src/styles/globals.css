@@ -342,3 +342,39 @@ body {
   .stat-card .stat-icon { width: 30px; height: 30px; font-size: 0.85rem; }
   .table td, .table th { font-size: 0.72rem; padding: 4px 5px; }
 }
+
+/* ============ 報價單（A4，產出報價單用；components/QuoteDocModal.tsx） ============
+   用寫死的 hex 和固定寬度：匯出給客人的永遠是白底 A4，不受深色模式和 Bootstrap 影響。
+   參考 Bluz Computer Studio 的 .doc 版面。 */
+.qdoc-scroll { overflow-x: auto; background: #eef0f4; padding: 16px; border-radius: 8px; }
+.qdoc {
+  background: #fff; width: 794px; min-height: 1123px; margin: 0 auto; padding: 48px 52px;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.12); font-size: 14px; color: #333; line-height: 1.5;
+  font-family: -apple-system, 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+}
+.qdoc-head { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #1f2a44; padding-bottom: 18px; }
+.qdoc-logo { max-height: 64px; max-width: 200px; margin-bottom: 8px; display: block; }
+.qdoc-company { font-size: 22px; font-weight: 700; color: #1f2a44; }
+.qdoc-company-info { font-size: 12px; color: #667; white-space: pre-line; margin-top: 6px; }
+.qdoc-title-block { text-align: right; }
+.qdoc-title { font-size: 30px; font-weight: 700; color: #1f2a44; letter-spacing: 4px; }
+.qdoc-meta { font-size: 12px; color: #556; margin-top: 8px; line-height: 1.8; }
+.qdoc-meta b { color: #333; }
+.qdoc-bill { margin: 24px 0 8px; }
+.qdoc-lbl { font-size: 11px; color: #889; letter-spacing: 1px; }
+.qdoc-client { font-size: 16px; font-weight: 600; color: #1f2a44; margin-top: 2px; }
+.qdoc-client-info { font-size: 12px; color: #667; white-space: pre-line; margin-top: 3px; }
+.qdoc-items { width: 100%; border-collapse: collapse; margin-top: 18px; }
+.qdoc-items thead th { background: #1f2a44; color: #fff; font-size: 12px; padding: 10px 12px; text-align: left; font-weight: 500; }
+.qdoc-items th.num, .qdoc-items td.num { text-align: right; white-space: nowrap; }
+.qdoc-items tbody td { padding: 10px 12px; border-bottom: 1px solid #e6e9ef; font-size: 13px; vertical-align: top; }
+.qdoc-items tbody tr:nth-child(even) td { background: #f7f9fc; }
+.qdoc-totals { display: flex; justify-content: flex-end; margin-top: 16px; }
+.qdoc-totals table { width: 300px; border-collapse: collapse; }
+.qdoc-totals td { padding: 6px 12px; font-size: 13px; }
+.qdoc-totals td.lbl { color: #667; text-align: right; }
+.qdoc-totals td.val { text-align: right; white-space: nowrap; }
+.qdoc-totals tr.grand td { border-top: 2px solid #1f2a44; font-size: 16px; font-weight: 700; color: #1f2a44; padding-top: 10px; }
+.qdoc-notes { margin-top: 32px; font-size: 12px; color: #556; }
+.qdoc-notes-body { white-space: pre-line; margin-top: 4px; }
+.qdoc-text { white-space: pre-wrap; font-size: 12px; background: #f6f7f9; border: 1px solid #e3e6ea; border-radius: 6px; padding: 8px 10px; min-height: 110px; max-height: 220px; overflow: auto; margin: 0; font-family: inherit; }
