@@ -7,6 +7,7 @@ import Modal from '@/components/ui/Modal';
 import PaginationComp from '@/components/ui/Pagination';
 import * as Fmt from '@/lib/format';
 import QuoteDocModal, { type QuoteDocData } from '@/components/QuoteDocModal';
+import CustomerPicker from '@/components/CustomerPicker';
 import PublishModal from '@/components/PublishModal';
 import InspectionModal from '@/components/InspectionModal';
 
@@ -85,6 +86,8 @@ interface Customer {
   source?: string;
   note?: string;
   order_count?: number;
+  last_order_at?: string | null;
+  created_at?: string;
 }
 
 interface CatNode {
@@ -150,11 +153,9 @@ export default function QuotationsPage() {
 
   // Customer search
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [custDropdownOpen, setCustDropdownOpen] = useState(false);
   const [custSearchText, setCustSearchText] = useState('');
   // 打了客戶清單裡沒有的名字：存檔時用這支電話建立新客戶
   const [newCustPhone, setNewCustPhone] = useState('');
-  const custSearchRef = useRef<HTMLDivElement>(null);
 
   // Category tree
   const [catTree, setCatTree] = useState<CatNode[]>([]);
@@ -196,16 +197,6 @@ export default function QuotationsPage() {
     return () => clearTimeout(searchTimer.current);
   }, [searchText]);
 
-  // Close customer dropdown on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (custSearchRef.current && !custSearchRef.current.contains(e.target as Node)) {
-        setCustDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
 
   // Close inventory dropdown on outside click
   useEffect(() => {
@@ -353,7 +344,6 @@ export default function QuotationsPage() {
       setCustSearchText(preset.name);
       if (preset.city) setFormDemandArea(preset.city + (preset.district ? ' ' + preset.district : ''));
     }
-    setCustDropdownOpen(false);
     setFormOpen(true);
   };
 
@@ -587,13 +577,6 @@ export default function QuotationsPage() {
     setDragOverIdx(null);
   };
 
-  // ===== Customer search filtering =====
-
-  const filteredCustomers = customers.filter(c => {
-    const q = custSearchText.trim().toLowerCase();
-    if (!q) return false;
-    return c.name.toLowerCase().includes(q) || (c.phone || '').includes(q);
-  }).slice(0, 10);
 
   // ===== Computed totals for form =====
 
@@ -802,62 +785,26 @@ export default function QuotationsPage() {
         <div className="row g-3 mb-3">
           <div className="col-md-3">
             <label className="form-label">客戶</label>
-            <div className="position-relative" ref={custSearchRef}>
-              <input
-                type="text"
-                className="form-control"
-                value={custSearchText}
-                placeholder="搜尋或輸入客戶名稱..."
-                autoComplete="off"
-                onChange={e => {
-                  const val = e.target.value;
-                  setCustSearchText(val);
-                  setFormCustomerName(val);
-                  setFormCustomerId(null);
-                  setCustDropdownOpen(!!val.trim());
-                }}
-                onFocus={() => { if (custSearchText.trim()) setCustDropdownOpen(true); }}
-              />
-              {custDropdownOpen && filteredCustomers.length > 0 && (
-                <div className="dropdown-menu show w-100" style={{ maxHeight: 200, overflowY: 'auto' }}>
-                  {filteredCustomers.map(c => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      className="dropdown-item"
-                      onClick={() => {
-                        setCustSearchText(c.name);
-                        setFormCustomerName(c.name);
-                        setFormCustomerId(c.id);
-                        setCustDropdownOpen(false);
-                        // Auto-fill demand area
-                        if (!formDemandArea && c.city) {
-                          setFormDemandArea(c.city + (c.district ? ' ' + c.district : ''));
-                        }
-                      }}
-                    >
-                      <strong>{c.name}</strong>{' '}
-                      <span className="text-muted small">{c.phone || ''} {c.city ? '· ' + c.city + (c.district ? ' ' + c.district : '') : ''}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            {/* 選到客戶：顯示他的聯絡資料；打的是新名字：可以順手填電話，存檔時建立客戶 */}
-            {formCustomerId ? (() => {
-              const c = customers.find((x) => x.id === formCustomerId);
-              return (
-                <div className="small text-muted mt-1">
-                  <i className="bi bi-person-check text-success" /> {[c?.phone, customerAddress(c)].filter(Boolean).join(' · ') || '已關聯客戶'}
-                  {' '}<a href={`/customers?id=${formCustomerId}`} target="_blank" rel="noopener noreferrer">客戶資料 ›</a>
-                </div>
-              );
-            })() : custSearchText.trim() ? (
-              <div className="mt-1">
-                <input type="tel" className="form-control form-control-sm" placeholder="新客戶的電話（選填）" value={newCustPhone} onChange={(e) => setNewCustPhone(e.target.value)} />
-                <div className="small text-muted mt-1">清單裡沒有這位，成交或填了電話就會自動建立客戶</div>
-              </div>
-            ) : null}
+            <CustomerPicker
+              customers={customers}
+              selectedId={formCustomerId}
+              text={custSearchText}
+              onTextChange={(val) => {
+                setCustSearchText(val);
+                setFormCustomerName(val);
+                setFormCustomerId(null);
+              }}
+              onSelect={(c) => {
+                setCustSearchText(c.name);
+                setFormCustomerName(c.name);
+                setFormCustomerId(c.id);
+                setNewCustPhone('');
+                // 帶入客戶的地區
+                if (!formDemandArea && c.city) setFormDemandArea(c.city + (c.district ? ' ' + c.district : ''));
+              }}
+              newPhone={newCustPhone}
+              onNewPhoneChange={setNewCustPhone}
+            />
           </div>
           <div className="col-md-3">
             <label className="form-label">狀態</label>
