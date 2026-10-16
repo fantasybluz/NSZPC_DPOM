@@ -109,13 +109,6 @@ router.get('/cost-method', async (_req: Request, res: Response) => {
   res.json({ method: await getCostMethod() });
 });
 
-router.put('/cost-method', adminOnly, async (req: Request, res: Response) => {
-  const { method } = req.body;
-  if (method !== 'fifo' && method !== 'average') return res.status(400).json({ error: '無效的成本方法' });
-  await pool.query("INSERT INTO settings (key, value) VALUES ('cost_method', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [method]);
-  res.json({ success: true });
-});
-
 // ========== 庫存列表 ==========
 
 router.get('/', async (req: Request, res: Response) => {

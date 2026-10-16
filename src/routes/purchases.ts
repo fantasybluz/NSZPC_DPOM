@@ -104,6 +104,8 @@ router.post('/orders', async (req: Request, res: Response) => {
 // 更新狀態
 router.put('/orders/:id/status', async (req: Request, res: Response) => {
   const { status } = req.body;
+  // 到貨要走 /receive（會入庫），這裡只能改成待到貨或取消
+  if (!['pending', 'cancelled'].includes(status)) return res.status(400).json({ error: '狀態只能是 pending 或 cancelled' });
   await pool.query('UPDATE purchase_orders SET status=$1 WHERE id=$2', [status, req.params.id]);
   res.json({ success: true });
 });

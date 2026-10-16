@@ -33,25 +33,3 @@ export interface CustomerQuotation {
   created_at: string;
 }
 
-export interface CreateCustomerInput {
-  name: string;
-  phone?: string;
-  email?: string;
-  source?: CustomerSource;
-  city?: string;
-  district?: string;
-  address?: string;
-  note?: string;
-}
-
-export interface CustomerDistribution {
-  byCity: { city: string; count: number }[];
-  bySource: { source: string; count: number }[];
-  total: number;
-}
-
-export interface CreateServiceInput {
-  service_type?: string;
-  description?: string;
-  service_date?: string;
-}

@@ -16,17 +16,6 @@ export interface User {
   updated_at: string;
 }
 
-export interface UserPublic {
-  id: number;
-  email: string;
-  username: string;
-  display_name: string;
-  role: UserRole;
-  permissions: PagePermission[];
-  is_active: number;
-  created_at: string;
-}
-
 export interface SessionData {
   userId: number;
   email: string;
@@ -36,16 +25,3 @@ export interface SessionData {
   permissions: PagePermission[];
 }
 
-export interface CreateUserInput {
-  email: string;
-  display_name?: string;
-  role?: UserRole;
-  permissions?: PagePermission[];
-}
-
-export interface UpdateUserInput {
-  display_name?: string;
-  role?: UserRole;
-  permissions?: PagePermission[];
-  is_active?: number;
-}

@@ -3,13 +3,6 @@
 
 import type { SessionData } from '../types';
 
-export interface UploadedFile {
-  originalname: string;
-  mimetype: string;
-  size: number;
-  data: ArrayBuffer;
-}
-
 export interface Request {
   method: string;
   path: string;
@@ -18,8 +11,6 @@ export interface Request {
   body: any;
   headers: Record<string, string>;
   user?: SessionData;
-  /** multipart/form-data 上傳的檔案（欄位名稱 → 檔案） */
-  files?: UploadedFile[];
   /** 原本的 Fetch Request（讀 formData 等） */
   raw: globalThis.Request;
   env: Env;

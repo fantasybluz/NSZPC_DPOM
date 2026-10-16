@@ -75,8 +75,8 @@ interface Settlement {
 /* ========== Labels ========== */
 const paymentLabels: Record<string, string> = { weekly: '周結', monthly: '月結', cod: '貨到付款' };
 const taxLabels: Record<string, string> = { tax_included: '含稅', tax_excluded: '未稅', tax_free: '免稅' };
-const statusLabels: Record<string, string> = { pending: '待確認', confirmed: '已確認', received: '已到貨', cancelled: '已取消' };
-const statusColors: Record<string, string> = { pending: '#f59e0b', confirmed: '#3b82f6', received: '#10b981', cancelled: '#ef4444' };
+const statusLabels: Record<string, string> = { pending: '待到貨', received: '已到貨', cancelled: '已取消' };
+const statusColors: Record<string, string> = { pending: '#f59e0b', received: '#10b981', cancelled: '#ef4444' };
 const chartColors = ['#374151', '#6b7280', '#9ca3af', '#d1d5db', '#e5e7eb', '#f3f4f6'];
 
 /* ========== PO Item Row helper ========== */
@@ -277,6 +277,16 @@ export default function PurchasesPage() {
   };
 
   /* ===== Receive Order ===== */
+  // 盤商沒貨、不要了：標記已取消（紀錄留著，跟刪除不同）
+  const cancelOrder = async (orderId: number) => {
+    if (!confirm('確定取消這筆叫貨？紀錄會保留，狀態改成「已取消」。')) return;
+    try {
+      await api.put(`/purchases/orders/${orderId}/status`, { status: 'cancelled' });
+      showToast('已取消叫貨');
+      loadAll();
+    } catch (err: any) { showToast(err.message, 'danger'); }
+  };
+
   const openReceiveForm = async (orderId: number) => {
     try {
       const [order, inv] = await Promise.all([
@@ -539,9 +549,14 @@ export default function PurchasesPage() {
                         </td>
                         <td className="text-nowrap">
                           {o.status === 'pending' && (
-                            <button className="btn btn-sm btn-outline-success me-1" title="確認到貨入庫" onClick={() => openReceiveForm(o.id)}>
-                              <i className="bi bi-check-lg" />
-                            </button>
+                            <>
+                              <button className="btn btn-sm btn-outline-success me-1" title="確認到貨入庫" onClick={() => openReceiveForm(o.id)}>
+                                <i className="bi bi-check-lg" />
+                              </button>
+                              <button className="btn btn-sm btn-outline-warning me-1" title="取消叫貨（保留紀錄）" onClick={() => cancelOrder(o.id)}>
+                                <i className="bi bi-x-circle" />
+                              </button>
+                            </>
                           )}
                           <button className="btn btn-sm btn-outline-secondary me-1" title="檢視" onClick={() => viewOrder(o.id)}>
                             <i className="bi bi-eye" />

@@ -122,7 +122,6 @@ erDiagram
         varchar demand_area
         date ship_date
         varchar delivery_status
-        jsonb qc_data
     }
     quotation_items {
         int id PK
@@ -310,14 +309,13 @@ erDiagram
 - 結款紀錄管理（待結/已結）
 
 ### 6. 售後服務
-- **保固管理**：自動計算到期日，到期提醒
+- **保固管理**：自動計算到期日（過期自動顯示「已過期」），到期提醒，可以標記「已報修」
 - **維修工單**：建單 → 診斷 → 維修 → 完成，完整流程追蹤
 - 維修進度日誌
 
 ### 7. 社群追蹤
-- **YouTube**：設定 API Key + 頻道 ID，即時查看訂閱數/觀看次數/影片數
-- **Instagram**：自動爬蟲抓取追蹤人數（含手動輸入備案）
-- **店家資訊**：地址/電話/LINE（用於出機檢查單）
+- **YouTube**：設定 API Key + 頻道 ID，由 Worker 查訂閱數／觀看次數／影片數（快取一小時；金鑰只存在伺服器，不會送到瀏覽器）
+- **Instagram**：手動輸入追蹤數（IG 沒有開放查詢）
 
 ### 8. 權限管理
 - 使用者帳號管理（管理員/一般使用者）
@@ -326,7 +324,7 @@ erDiagram
 
 ### 9. 儀表板
 - 庫存品項/成本/利潤統計卡片
-- YouTube 訂閱數 + Instagram 追蹤數即時顯示
+- YouTube 訂閱數、Instagram 追蹤數
 - **當月訂單狀況**：狀態卡片 + 訂單類型 badge
 - 庫存分類圖表
 - 低庫存警示、保固到期、未結款、進行中維修通知
@@ -380,7 +378,9 @@ Cloudflare 後台 › Zero Trust › Access › Applications：
 │   ├── worker.ts              # Worker 入口（掛 routes、登入檢查、安全標頭）
 │   ├── lib/
 │   │   ├── router.ts          # Express 相容層
-│   │   └── access.ts          # Cloudflare Access JWT 驗證
+│   │   ├── access.ts          # Cloudflare Access JWT 驗證
+│   │   ├── specs.ts           # 訂單品項 → 規格（發布到官網、檢測表用）
+│   │   └── inspection.ts      # 檢測表的預設項目
 │   ├── types/                 # TypeScript 型別定義
 │   ├── models/
 │   │   └── database.ts        # D1 存取 + 成本計算 + 扣庫存
@@ -388,13 +388,14 @@ Cloudflare 後台 › Zero Trust › Access › Applications：
 │       ├── auth.ts            # 登入檢查與使用者管理
 │       ├── inventory.ts       # 庫存 + 分類 + 進出貨
 │       ├── quotations.ts      # 訂單管理 + 圖片（R2）
+│       ├── publish.ts         # 訂單發布到官網（RPC 到 NSZ_PC）
+│       ├── inspections.ts     # 出機檢測表
 │       ├── customers.ts       # 客戶管理
 │       ├── purchases.ts       # 叫貨訂單 + 結款管理
 │       ├── reports.ts         # 報表 + 保固 + 維修 + 匯出
-│       └── settings.ts        # 設定 + IG 爬蟲
-├── migrations/                # D1 資料表（0001）和預設資料（0002）
+│       └── settings.ts        # 設定 + YouTube 查詢 + IG 手動輸入
+├── migrations/                # D1：資料表（0001）、預設資料（0002）、之後的變更（0003～）
 ├── frontend/                  # Next.js 前端（npm run build 輸出到 frontend/out）
-├── public/                    # 舊版的原生 JS 前端（已經不用，Worker 不會提供）
 ├── tests/api.test.ts          # API 整合測試
 ├── wrangler.jsonc
 └── package.json
@@ -403,5 +404,5 @@ Cloudflare 後台 › Zero Trust › Access › Applications：
 ## 注意事項
 
 - 整個網站在 Cloudflare Access 後面，沒登入連頁面都看不到；`workers.dev` 和預覽網址已關閉
-- LINE Notify 服務在 2025-03-31 已經結束，「LINE 通知」會一直失敗；之後可以改用 LINE Messaging API
-- Instagram 追蹤數是抓 IG 的網頁，IG 常常擋，抓不到就用手動輸入
+- LINE Notify 服務在 2025-03-31 結束，LINE 通知功能已經拿掉；之後要通知可以改用 LINE Messaging API
+- Instagram 沒有開放查詢，追蹤數用手動輸入

@@ -468,6 +468,14 @@ describe('Purchases API', () => {
     assert.equal((await request('GET', '/api/purchases/stats')).status, 200);
 
     assert.equal((await request('DELETE', `/api/purchases/orders/${order.body.id}`)).status, 200);
+
+    // 取消叫貨：紀錄留著、狀態改成已取消；到貨只能走 /receive
+    const toCancel = await request('POST', '/api/purchases/orders', { supplier_id: sup.body.id, order_date: '2026-10-14', items: [{ product_name: 'C', quantity: 1, unit_price: 500 }] });
+    assert.equal((await request('PUT', `/api/purchases/orders/${toCancel.body.id}/status`, { status: 'received' })).status, 400);
+    assert.equal((await request('PUT', `/api/purchases/orders/${toCancel.body.id}/status`, { status: 'cancelled' })).status, 200);
+    assert.equal((await request('GET', `/api/purchases/orders/${toCancel.body.id}`)).body.status, 'cancelled');
+    assert.equal((await request('DELETE', `/api/purchases/orders/${toCancel.body.id}`)).status, 200);
+
     assert.equal((await request('DELETE', `/api/purchases/suppliers/${sup.body.id}`)).status, 200);
     assert.equal((await request('DELETE', `/api/inventory/${inv.body.id}`)).status, 200);
   });
@@ -485,6 +493,21 @@ describe('Reports API', () => {
     assert.ok(String(csv.body).includes(`維修測試${unique}`));
     assert.equal((await request('DELETE', `/api/reports/repairs/${repair.body.id}`)).status, 200);
   });
+
+  it('保固可以標記報修、改回有效', async () => {
+    const w = await request('POST', '/api/reports/warranties', { product_name: `保固測試${unique}`, ship_date: '2026-01-01', warranty_months: 12 });
+    assert.equal((await request('PUT', `/api/reports/warranties/${w.body.id}`, { status: 'claimed' })).status, 200);
+    const list = await request('GET', '/api/reports/warranties');
+    assert.equal(list.body.find((x: any) => x.id === w.body.id).status, 'claimed');
+    await request('DELETE', `/api/reports/warranties/${w.body.id}`);
+  });
+
+  it('拿掉的功能回 404（LINE Notify、備份、還原、即將到期的保固）', async () => {
+    assert.equal((await request('POST', '/api/reports/line-notify', { message: 'x' })).status, 404);
+    assert.equal((await request('GET', '/api/reports/backup')).status, 404);
+    assert.equal((await request('POST', '/api/reports/restore')).status, 404);
+    assert.equal((await request('GET', '/api/reports/warranties/expiring')).status, 404);
+  });
 });
 
 // ========== 設定 ==========
@@ -497,5 +520,14 @@ describe('Settings API', () => {
 
   it('成本方法', async () => {
     assert.equal((await request('GET', '/api/inventory/cost-method')).body.method, 'fifo');
+  });
+
+  it('YouTube 金鑰只能寫、讀不到；沒設定時查詢回 configured: false', async () => {
+    assert.equal((await request('GET', '/api/settings/youtube_api_key')).status, 403);
+    assert.equal((await request('PUT', '/api/settings/youtube_api_key', { value: 'x' })).status, 403);
+    const yt = await request('GET', '/api/settings/youtube');
+    assert.equal(typeof yt.body.hasKey, 'boolean');
+    assert.ok(!('apiKey' in yt.body));
+    if (!yt.body.hasKey) assert.equal((await request('GET', '/api/settings/youtube/stats')).body.configured, false);
   });
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import * as Fmt from '@/lib/format';
@@ -45,12 +45,11 @@ export default function DashboardPage() {
   useEffect(() => {
     (async () => {
       try {
-        const [inv, quot, mon, ytKey, ytId, igF, igU] = await Promise.all([
+        const [inv, quot, mon, yt, igF, igU] = await Promise.all([
           api.get('/inventory/stats'),
           api.get('/quotations/stats/summary').catch(() => []),
           api.get('/quotations/stats/monthly').catch(() => ({ month: '', byStatus: [], byDelivery: [], recent: [], total: {} })),
-          api.get('/settings/youtube_api_key').catch(() => ({ value: '' })),
-          api.get('/settings/youtube_channel_id').catch(() => ({ value: '' })),
+          api.get<any>('/settings/youtube/stats').catch(() => null),
           api.get('/settings/ig_followers').catch(() => ({ value: '' })),
           api.get('/settings/ig_username').catch(() => ({ value: '' })),
         ]);
@@ -60,17 +59,11 @@ export default function DashboardPage() {
         setIgFollowers(igF.value || '');
         setIgUsername(igU.value || '');
 
-        // YouTube
-        if (ytKey.value && ytId.value) {
-          try {
-            const res = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=statistics,snippet&id=${ytId.value}&key=${ytKey.value}`);
-            const data = await res.json();
-            if (data.items?.length) {
-              setYtSubs(parseInt(data.items[0].statistics.subscriberCount));
-              setYtName(data.items[0].snippet.title);
-              setYtThumb(data.items[0].snippet.thumbnails?.default?.url || '');
-            }
-          } catch {}
+        // YouTube（Worker 去查，金鑰不會到瀏覽器；快取一小時）
+        if (yt?.configured) {
+          setYtSubs(yt.subscribers);
+          setYtName(yt.title);
+          setYtThumb(yt.thumb || '');
         }
       } catch {}
       setLoading(false);

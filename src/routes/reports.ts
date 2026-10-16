@@ -91,18 +91,6 @@ router.delete('/warranties/:id', async (req: Request, res: Response) => {
   res.json({ success: true });
 });
 
-// 即將到期
-router.get('/warranties/expiring', async (_req: Request, res: Response) => {
-  const in30 = new Date(); in30.setDate(in30.getDate() + 30);
-  const end = in30.toISOString().slice(0, 10);
-  const today = new Date().toISOString().slice(0, 10);
-  const { rows } = await pool.query(
-    "SELECT * FROM warranties WHERE status='active' AND warranty_end != '' AND warranty_end <= $1 AND warranty_end >= $2 ORDER BY warranty_end ASC",
-    [end, today]
-  );
-  res.json(rows);
-});
-
 // ========== 維修工單 ==========
 
 async function generateRepairNo(): Promise<string> {
@@ -195,23 +183,6 @@ router.get('/notifications', async (_req: Request, res: Response) => {
   res.json({ lowStock, expiringWarranties, unpaidSettlements, activeRepairs });
 });
 
-// Line Notify（注意：LINE Notify 服務在 2025-03-31 已經結束，這裡會一直失敗；之後可以改用 LINE Messaging API）
-router.post('/line-notify', async (req: Request, res: Response) => {
-  const { rows } = await pool.query("SELECT value FROM settings WHERE key='line_notify_token'");
-  if (!rows[0]?.value) return res.status(400).json({ error: '未設定 Line Notify Token' });
-
-  const { message } = req.body;
-  try {
-    const r = await fetch('https://notify-api.line.me/api/notify', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${rows[0].value}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `message=${encodeURIComponent(message)}`
-    });
-    const data = await r.json();
-    res.json(data);
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
-});
-
 // ========== 匯出 CSV ==========
 
 router.get('/export/:type', async (req: Request, res: Response) => {
@@ -256,16 +227,6 @@ router.get('/export/:type', async (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}_${date}.csv"`);
   res.send(csv);
-});
-
-// ========== 資料備份/還原 ==========
-
-router.get('/backup', async (_req: Request, res: Response) => {
-  res.json({ message: '資料在 Cloudflare D1，備份請在電腦上執行 npm run db:backup（見 README）；D1 也會自動保留 30 天內任一時間點可以還原（Time Travel）' });
-});
-
-router.post('/restore', (_req: Request, res: Response) => {
-  res.json({ message: '還原請用 npx wrangler d1 time-travel restore nszpc-dpom（見 README）' });
 });
 
 export default router;

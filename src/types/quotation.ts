@@ -16,7 +16,6 @@ export interface Quotation {
   demand_area: string;
   ship_date: string;
   delivery_status: DeliveryStatus;
-  qc_data: string;
   created_at: string;
   updated_at: string;
   items?: QuotationItem[];
@@ -43,28 +42,3 @@ export interface QuotationImage {
   created_at: string;
 }
 
-export interface CreateQuotationInput {
-  customer_id?: number | null;
-  customer_name?: string;
-  items?: Omit<QuotationItem, 'id' | 'quotation_id'>[];
-  deposit?: number;
-  service_fee?: number;
-  note?: string;
-  item_title?: string;
-  demand_area?: string;
-  ship_date?: string;
-  delivery_status?: DeliveryStatus;
-  qc_data?: Record<string, boolean>;
-}
-
-export interface UpdateQuotationInput extends CreateQuotationInput {
-  status?: QuotationStatus;
-}
-
-export interface QuotationStatsSummary {
-  status: QuotationStatus;
-  count: number;
-  revenue: number;
-  profit: number;
-  deposits: number;
-}

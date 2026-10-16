@@ -11,7 +11,3 @@ export function percent(n: number | null | undefined): string {
   return (n || 0).toFixed(1) + '%';
 }
 
-export function margin(cost: number, price: number): number {
-  if (!price) return 0;
-  return ((price - cost) / price) * 100;
-}

@@ -4,7 +4,6 @@ data/
 *.db
 .env
 .env.*
-!deploy/*.env
 
 # Cloudflare（wrangler）
 .wrangler/

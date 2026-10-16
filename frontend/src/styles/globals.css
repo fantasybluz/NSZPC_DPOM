@@ -109,30 +109,6 @@ body {
 .badge-completed { background: #d1fae5; color: #065f46; }
 .badge-cancelled { background: #fee2e2; color: #991b1b; }
 
-/* ============ Inventory sidebar tree ============ */
-.inv-sidebar {
-  width: 220px; background: #fff; border-right: 1px solid var(--border);
-  min-height: calc(100vh - 140px); position: sticky; top: 60px;
-}
-.inv-sidebar-header {
-  padding: 14px 16px; font-weight: 600; font-size: 0.85rem; color: var(--text-secondary);
-  text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-light);
-  display: flex; justify-content: space-between; align-items: center;
-}
-.inv-tree { padding: 6px 0; overflow-y: auto; max-height: calc(100vh - 200px); }
-.inv-tree-item {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 7px 16px; cursor: pointer; transition: all 0.15s;
-  border-left: 3px solid transparent; font-size: 0.88rem;
-}
-.inv-tree-item:hover { background: var(--border-light); }
-.inv-tree-item.active { background: #f3f4f6; border-left-color: var(--accent); font-weight: 600; }
-.inv-tree-label { display: flex; align-items: center; gap: 8px; overflow: hidden; white-space: nowrap; }
-.inv-tree-label i { font-size: 0.9rem; width: 16px; text-align: center; color: var(--text-muted); flex-shrink: 0; }
-.inv-tree-item.active .inv-tree-label i { color: var(--accent); }
-.inv-tree-count { font-size: 0.75rem; color: var(--text-muted); background: var(--border-light); padding: 1px 7px; border-radius: 10px; flex-shrink: 0; }
-.inv-tree-item.active .inv-tree-count { background: #e5e7eb; color: var(--accent); }
-
 /* ============ Inventory horizontal category bar ============ */
 .inv-cat-bar {
   background: #fff; border: 1px solid var(--border); border-radius: 10px;
@@ -165,8 +141,6 @@ body {
 .inv-cat-sub-tab.active { background: var(--border); color: var(--text); font-weight: 600; }
 
 /* ============ Drag & drop ============ */
-.quot-drag-row { transition: opacity 0.2s; }
-.quot-drag-row.drag-over { border-top: 2px solid var(--accent) !important; }
 .drag-handle:hover { color: var(--accent) !important; }
 .drag-handle:active { cursor: grabbing !important; }
 
@@ -174,7 +148,6 @@ body {
 .cat-node { transition: opacity 0.2s; }
 .cat-node.drag-over-top { border-top: 2px solid var(--accent); }
 .cat-node.drag-over-bottom { border-bottom: 2px solid var(--accent); }
-.cat-node.drag-over-middle > .cat-node-header { background: rgba(55,65,81,0.08); outline: 2px dashed var(--accent); outline-offset: -2px; border-radius: 6px; }
 .cat-node-header {
   display: flex; justify-content: space-between; align-items: center;
   padding: 7px 12px; border-radius: 6px; transition: background 0.15s;
@@ -185,47 +158,17 @@ body {
 .cat-drag-handle:active { cursor: grabbing; }
 .cat-node-children { border-left: 1px solid var(--border-light); margin-left: 20px; }
 
-/* ============ OCR paste zone ============ */
-.ocr-paste-zone {
-  border: 2px dashed var(--border); border-radius: 8px; padding: 14px;
-  text-align: center; color: var(--text-muted); font-size: 0.88rem;
-  cursor: pointer; transition: all 0.2s; outline: none;
-}
-.ocr-paste-zone:hover, .ocr-paste-zone:focus {
-  border-color: var(--primary); color: var(--text-secondary); background: var(--border-light);
-}
-
-/* ============ Parse result ============ */
-.parse-result-item {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 10px 14px; border-bottom: 1px solid var(--border-light); transition: background 0.2s;
-}
-.parse-result-item:hover { background: var(--border-light); }
-.parse-result-item:last-child { border-bottom: none; }
-
 /* ============ Taiwan map ============ */
 .taiwan-map-container {
   background: #fff; border-radius: 12px; padding: 24px;
   box-shadow: var(--shadow); border: 1px solid var(--border);
 }
-.city-dot { cursor: pointer; transition: all 0.2s; }
-.city-dot:hover { filter: brightness(1.2); }
 
 /* ============ Source icons ============ */
 .source-youtube { color: #dc2626; }
 .source-ig { color: #e4405f; }
 .source-line { color: #00c300; }
 .source-other { color: var(--text-muted); }
-
-/* ============ Split panel divider ============ */
-.split-divider {
-  width: 8px; cursor: col-resize; display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0; position: relative; z-index: 5;
-}
-.split-divider-line {
-  width: 3px; height: 40px; background: var(--border); border-radius: 2px; transition: background 0.2s;
-}
-.split-divider:hover .split-divider-line { background: var(--primary); }
 
 /* ============ Low stock ============ */
 .low-stock { background: rgba(239, 68, 68, 0.03); }
@@ -281,7 +224,7 @@ body {
 
 /* ============ Print ============ */
 @media print {
-  .sidebar, .top-bar, .no-print, .sidebar-overlay { display: none !important; }
+  .sidebar, .top-bar, .sidebar-overlay { display: none !important; }
   .main-content { margin-left: 0 !important; }
 }
 

@@ -6,7 +6,6 @@ import '@/styles/globals.css';
 import '@/styles/apple.css';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { ToastProvider } from '@/contexts/ToastContext';
-import BootstrapClient from '@/components/BootstrapClient';
 
 export const metadata: Metadata = {
   title: '星辰電腦管理系統',
@@ -30,7 +29,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {children}
           </ToastProvider>
         </AuthProvider>
-        <BootstrapClient />
       </body>
     </html>
   );

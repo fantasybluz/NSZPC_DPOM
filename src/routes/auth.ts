@@ -11,7 +11,6 @@ const router = new Router();
 const ALL_PERMISSIONS: PagePermission[] = ['dashboard', 'inventory', 'quotations', 'suppliers', 'customers', 'youtube', 'users', 'categories'];
 
 /** Cloudflare Access 的登出網址 */
-export const LOGOUT_URL = '/cdn-cgi/access/logout';
 
 const parseEmails = (value: string | undefined): string[] =>
   (value ?? '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
@@ -81,11 +80,6 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 // 取得當前使用者
 router.get('/me', authMiddleware, (req: Request, res: Response) => {
   res.json(req.user);
-});
-
-// 登出：前端導到 Cloudflare Access 的登出網址
-router.post('/logout', (_req: Request, res: Response) => {
-  res.json({ success: true, logoutUrl: LOGOUT_URL });
 });
 
 // ========== 使用者管理 (僅管理員) ==========

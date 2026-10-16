@@ -151,9 +151,3 @@ export const verifyAccessJwt = async (
   }
   return claims.email.toLowerCase();
 };
-
-/** 測試用：清掉公鑰快取 */
-export const resetAccessKeyCache = (): void => {
-  keys = new Map();
-  fetchedAt = 0;
-};

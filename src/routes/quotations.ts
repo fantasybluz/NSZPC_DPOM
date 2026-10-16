@@ -22,7 +22,7 @@ const FILENAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const uploadKey = (filename: string): string => `uploads/${filename}`;
 
 /** 讀一張上傳的圖片（routes 和 worker.ts 的 /api/uploads 共用） */
-export async function serveUpload(env: Env, filename: string): Promise<globalThis.Response> {
+async function serveUpload(env: Env, filename: string): Promise<globalThis.Response> {
   if (!FILENAME_PATTERN.test(filename)) {
     return new Response().status(404).json({ error: '圖片不存在' }).toResponse();
   }
@@ -139,7 +139,7 @@ async function resolveCustomer(customerId: unknown, customerName: unknown): Prom
 
 // 新增
 router.post('/', async (req: Request, res: Response) => {
-  const { customer_id: rawCustomerId, customer_name: rawCustomerName, items, status, deposit, service_fee, note, item_title, demand_area, ship_date, delivery_status, qc_data } = req.body;
+  const { customer_id: rawCustomerId, customer_name: rawCustomerName, items, status, deposit, service_fee, note, item_title, demand_area, ship_date, delivery_status } = req.body;
   const { id: customer_id, name: customer_name } = await resolveCustomer(rawCustomerId, rawCustomerName);
   const quotation_no = await generateQuotationNo();
   const initStatus = status && typeof status === 'string' ? status : 'draft';
@@ -154,10 +154,10 @@ router.post('/', async (req: Request, res: Response) => {
   total_price += (service_fee || 0);
 
   const { rows } = await pool.query(`
-    INSERT INTO quotations (quotation_no, customer_id, customer_name, status, deposit, service_fee, total_cost, total_price, note, item_title, demand_area, ship_date, delivery_status, qc_data)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id
+    INSERT INTO quotations (quotation_no, customer_id, customer_name, status, deposit, service_fee, total_cost, total_price, note, item_title, demand_area, ship_date, delivery_status)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id
   `, [quotation_no, customer_id || null, customer_name || '', initStatus, deposit || 0, service_fee || 0, total_cost, total_price, note || '',
-    item_title || '', demand_area || '', ship_date || '', delivery_status || '', JSON.stringify(qc_data || {})]);
+    item_title || '', demand_area || '', ship_date || '', delivery_status || '']);
 
   const qId = rows[0].id;
   await insertQuotationItems(qId, items);
@@ -179,7 +179,7 @@ router.post('/', async (req: Request, res: Response) => {
 
 // 更新
 router.put('/:id', async (req: Request, res: Response) => {
-  const { customer_id: rawCustomerId, customer_name: rawCustomerName, items, deposit, service_fee, status, note, item_title, demand_area, ship_date, delivery_status, qc_data } = req.body;
+  const { customer_id: rawCustomerId, customer_name: rawCustomerName, items, deposit, service_fee, status, note, item_title, demand_area, ship_date, delivery_status } = req.body;
   const qId = parseInt(req.params.id as string);
   const newStatus = status || 'draft';
   const { id: customer_id, name: customer_name } = await resolveCustomer(rawCustomerId, rawCustomerName);
@@ -210,10 +210,10 @@ router.put('/:id', async (req: Request, res: Response) => {
   // 3) 更新主表
   await pool.query(`
     UPDATE quotations SET customer_id=$1, customer_name=$2, status=$3, deposit=$4, service_fee=$5, total_cost=$6, total_price=$7, note=$8,
-    item_title=$9, demand_area=$10, ship_date=$11, delivery_status=$12, qc_data=$13,
-    updated_at=NOW() WHERE id=$14
+    item_title=$9, demand_area=$10, ship_date=$11, delivery_status=$12,
+    updated_at=NOW() WHERE id=$13
   `, [customer_id || null, customer_name || '', newStatus, deposit || 0, service_fee || 0, total_cost, total_price, note || '',
-    item_title || '', demand_area || '', ship_date || '', delivery_status || '', JSON.stringify(qc_data || {}), qId]);
+    item_title || '', demand_area || '', ship_date || '', delivery_status || '', qId]);
 
   // 4) 若新狀態為「成立」，依新 items 扣帳；若庫存不足，把狀態回退並回原扣帳狀態
   if (isDeductingStatus(newStatus)) {
@@ -237,8 +237,8 @@ router.post('/:id/copy', async (req: Request, res: Response) => {
   const { rows: origItems } = await pool.query('SELECT * FROM quotation_items WHERE quotation_id=$1', [orig.id]);
   const newNo = await generateQuotationNo();
   const { rows: newRows } = await pool.query(
-    `INSERT INTO quotations (quotation_no, customer_id, customer_name, status, deposit, service_fee, total_cost, total_price, note, item_title, demand_area, ship_date, delivery_status, qc_data) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id`,
-    [newNo, orig.customer_id, orig.customer_name, 'draft', 0, orig.service_fee, orig.total_cost, orig.total_price, orig.note, orig.item_title, orig.demand_area, '', '', orig.qc_data]
+    `INSERT INTO quotations (quotation_no, customer_id, customer_name, status, deposit, service_fee, total_cost, total_price, note, item_title, demand_area, ship_date, delivery_status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`,
+    [newNo, orig.customer_id, orig.customer_name, 'draft', 0, orig.service_fee, orig.total_cost, orig.total_price, orig.note, orig.item_title, orig.demand_area, '', '']
   );
   const newId = newRows[0].id;
   await insertQuotationItems(newId, origItems);

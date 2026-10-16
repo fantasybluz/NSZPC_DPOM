@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { api, ApiError, clearAuth, setStoredUser, LOGOUT_URL } from '@/lib/api';
+import { api, ApiError, clearAuth, LOGOUT_URL } from '@/lib/api';
 import type { PagePermission } from '@/lib/constants';
 
 interface User {
@@ -43,7 +43,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           permissions: data.permissions,
         };
         setUser(u);
-        setStoredUser(u);
       })
       .catch((err: unknown) => {
         clearAuth();

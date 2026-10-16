@@ -129,10 +129,6 @@ const recalcStatement = (inventoryIds: number[]): [string, unknown[]] => [
   [JSON.stringify([...new Set(inventoryIds)])],
 ];
 
-export async function recalcInventory(inventoryId: number): Promise<void> {
-  await pool.batch([recalcStatement([inventoryId])]);
-}
-
 interface BatchTake {
   id: number;
   take: number;

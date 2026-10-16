@@ -76,6 +76,12 @@ const STATUS_COLORS: Record<string, string> = {
   active: '#10b981', expired: '#ef4444', claimed: '#f59e0b',
 };
 
+/** 保固狀態：報修過就是 claimed，否則依到期日是 active 或 expired（資料庫不會自己改成過期） */
+const warrantyStatus = (w: { status: string; warranty_end: string }): string => {
+  if (w.status === 'claimed') return 'claimed';
+  return w.warranty_end && w.warranty_end < new Date().toISOString().slice(0, 10) ? 'expired' : 'active';
+};
+
 const REP_STATUS_LABELS: Record<string, string> = {
   received: '已收件', diagnosing: '檢測中', repairing: '維修中',
   waiting_parts: '等零件', completed: '已完成', returned: '已取件', cancelled: '已取消',
@@ -132,8 +138,6 @@ export default function ReportsPage() {
   /* notifications */
   const [notifs, setNotifs] = useState<Notifications | null>(null);
 
-  /* line notify */
-  const [lineToken, setLineToken] = useState('');
 
   /* ── fetch data ── */
   const fetchProfit = useCallback(async (period: 'monthly' | 'yearly') => {
@@ -164,19 +168,12 @@ export default function ReportsPage() {
     } catch { /* ignore */ }
   }, []);
 
-  const fetchLineToken = useCallback(async () => {
-    try {
-      const r = await api.get<{ value: string }>('/settings/line_notify_token');
-      if (r.value) setLineToken(r.value);
-    } catch { /* ignore */ }
-  }, []);
 
   useEffect(() => {
     fetchProfit(profitPeriod);
     fetchWarranties();
     fetchRepairs();
     fetchNotifs();
-    fetchLineToken();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { fetchProfit(profitPeriod); }, [profitPeriod, fetchProfit]);
@@ -184,7 +181,7 @@ export default function ReportsPage() {
   /* ── filtered + paginated warranties ── */
   const filteredWarranties = useMemo(() => {
     let list = warranties;
-    if (warStatus) list = list.filter(w => w.status === warStatus);
+    if (warStatus) list = list.filter(w => warrantyStatus(w) === warStatus);
     if (warSearch) {
       const q = warSearch.toLowerCase();
       list = list.filter(w =>
@@ -219,6 +216,14 @@ export default function ReportsPage() {
   const pagedRepairs = filteredRepairs.slice((repPage - 1) * repPageSize, repPage * repPageSize);
 
   /* ── warranty CRUD ── */
+  const handleWarrantyStatus = async (id: number, status: 'active' | 'claimed') => {
+    try {
+      await api.put(`/reports/warranties/${id}`, { status });
+      setWarranties((list) => list.map((w) => (w.id === id ? { ...w, status } : w)));
+      showToast(status === 'claimed' ? '已標記為報修' : '已改回有效');
+    } catch (err: any) { showToast(err.message, 'danger'); }
+  };
+
   const handleAddWarranty = async () => {
     if (!warForm.product_name) { showToast('請填寫產品名稱', 'warning'); return; }
     try {
@@ -289,22 +294,6 @@ export default function ReportsPage() {
     } catch (err: any) { showToast(err.message, 'danger'); }
   };
 
-  /* ── line notify ── */
-  const handleSaveLineToken = async () => {
-    try {
-      await api.put('/settings/line_notify_token', { value: lineToken });
-      showToast('Token 已儲存');
-    } catch (err: any) { showToast(err.message, 'danger'); }
-  };
-
-  const handleTestLineNotify = async () => {
-    try {
-      await api.post('/reports/line-notify', { message: '\n星辰電腦 NSZPC 通知測試成功！' });
-      showToast('測試通知已發送');
-    } catch (err: any) { showToast(err.message, 'danger'); }
-  };
-
-  /* ── export ── */
   const handleExport = (type: string) => {
     // 同網址的 Access cookie 會一起帶上，不用 token
     window.open(`${API_BASE}/reports/export/${type}`, '_blank');
@@ -488,8 +477,7 @@ export default function ReportsPage() {
                 <tbody>
                   {pagedWarranties.length ? pagedWarranties.map(w => {
                     const isExpired = w.warranty_end && w.warranty_end < today;
-                    const stLabel = STATUS_LABELS[w.status] || w.status;
-                    const stColor = STATUS_COLORS[w.status] || '#6b7280';
+                    const st = warrantyStatus(w);
                     return (
                       <tr key={w.id}>
                         <td><strong>{w.product_name}</strong></td>
@@ -497,7 +485,15 @@ export default function ReportsPage() {
                         <td>{w.customer_name || '-'}</td>
                         <td className="small">{w.ship_date || '-'}</td>
                         <td className={`small ${isExpired ? 'text-danger fw-bold' : ''}`}>{w.warranty_end || '-'}</td>
-                        <td>{badge(stLabel, stColor)}</td>
+                        <td>
+                          {/* 有效／已過期 依到期日自動算；報修了可以手動標記 */}
+                          <select className="form-select form-select-sm" style={{ width: 'auto', color: STATUS_COLORS[st] }}
+                            value={w.status === 'claimed' ? 'claimed' : 'auto'}
+                            onChange={(e) => handleWarrantyStatus(w.id, e.target.value === 'claimed' ? 'claimed' : 'active')}>
+                            <option value="auto">{STATUS_LABELS[isExpired ? 'expired' : 'active']}</option>
+                            <option value="claimed">{STATUS_LABELS.claimed}</option>
+                          </select>
+                        </td>
                         <td>
                           <button className="btn btn-sm btn-outline-danger" onClick={() => handleDelWarranty(w.id)}>
                             <i className="bi bi-trash" />
@@ -656,22 +652,6 @@ export default function ReportsPage() {
               </div>
             </div>
           ) : null}
-
-          {/* Line Notify */}
-          <div className="col-12">
-            <div className="form-section">
-              <h6><i className="bi bi-line" /> Line Notify</h6>
-              <div className="row g-2">
-                <div className="col-md-8">
-                  <input type="text" className="form-control form-control-sm" placeholder="Line Notify Token" value={lineToken} onChange={e => setLineToken(e.target.value)} />
-                </div>
-                <div className="col-md-4">
-                  <button className="btn btn-sm btn-primary" onClick={handleSaveLineToken}>儲存 Token</button>
-                  <button className="btn btn-sm btn-outline-secondary ms-1" onClick={handleTestLineNotify}>測試</button>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       )}
 
@@ -700,10 +680,8 @@ export default function ReportsPage() {
           <div className="col-md-6">
             <div className="form-section">
               <h6><i className="bi bi-database" /> 資料備份</h6>
-              <button className="btn btn-primary btn-sm" onClick={() => handleExport('../backup')}>
-                <i className="bi bi-download" /> 下載備份檔
-              </button>
-              <p className="text-muted small mt-2">備份為 SQLite 資料庫檔案，還原時覆蓋 data/shop.db 後重啟</p>
+              <p className="small mb-1">資料存在 Cloudflare D1，會自動保留 30 天內任一時間點，可以還原到那個時間（Time Travel）。</p>
+              <p className="text-muted small mb-0">要還原請找管理者；要留一份在自己電腦，可以用上面的 CSV 匯出。</p>
             </div>
           </div>
         </div>

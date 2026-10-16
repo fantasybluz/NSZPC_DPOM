@@ -82,7 +82,7 @@ a { color: var(--apple-blue); }
 
 /* ---------- 卡片：白底、18px 圓角、淡框線、不加陰影 ---------- */
 .stat-card, .form-section, .table-container, .chart-container, .taiwan-map-container,
-.inv-cat-bar, .card, .inv-sidebar {
+.inv-cat-bar, .card {
   background: #fff;
   border: 1px solid var(--apple-hairline) !important;
   border-radius: 18px !important;
@@ -182,8 +182,6 @@ a { color: var(--apple-blue); }
 /* ---------- 庫存分類列、樹狀分類：膠囊 ---------- */
 .inv-cat-tab, .inv-cat-sub-tab { border-radius: 980px; }
 .inv-cat-tab.active { background: var(--apple-ink); }
-.inv-tree-item.active { border-left-color: var(--apple-blue); background: #f5f5f7; }
-.inv-tree-item.active .inv-tree-label i { color: var(--apple-blue); }
 .cat-node-header { border-radius: 11px; }
 .cat-node.drag-over-top { border-top-color: var(--apple-blue); }
 .cat-node.drag-over-bottom { border-bottom-color: var(--apple-blue); }
@@ -201,7 +199,6 @@ a { color: var(--apple-blue); }
 .alert-info { background: #e8f1fb; color: #004f9e; }
 
 /* ---------- 其他 ---------- */
-.split-divider:hover .split-divider-line { background: var(--apple-blue); }
 ::-webkit-scrollbar-thumb { background: #c7c7cc; }
 .qdoc-scroll { background: #e8e8ed; border-radius: 18px; }
 

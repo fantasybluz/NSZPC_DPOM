@@ -6,17 +6,9 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 /** Cloudflare Access 的登出網址 */
 export const LOGOUT_URL = '/cdn-cgi/access/logout';
 
-export function getStoredUser() {
-  if (typeof window === 'undefined') return null;
-  try { return JSON.parse(localStorage.getItem('user') || 'null'); } catch { return null; }
-}
-
-export function setStoredUser(user: any) {
-  try { localStorage.setItem('user', JSON.stringify(user)); } catch { /* 存不了就算了 */ }
-}
-
+/** 清掉舊版存在瀏覽器的登入資料（現在不存了，留著是為了清乾淨以前的） */
 export function clearAuth() {
-  try { localStorage.removeItem('user'); localStorage.removeItem('token'); } catch { /* 同上 */ }
+  try { localStorage.removeItem('user'); localStorage.removeItem('token'); } catch { /* 存取不了就算了 */ }
 }
 
 /** API 回的錯誤（帶 HTTP 狀態，403 = 還沒開通 / 停用） */

@@ -4,7 +4,7 @@ import { Router, Response, runHandlers, type Handler, type Request } from './lib
 import { useDatabase } from './models/database';
 import authRouter, { authMiddleware } from './routes/auth';
 import inventoryRouter from './routes/inventory';
-import quotationsRouter, { serveUpload } from './routes/quotations';
+import quotationsRouter from './routes/quotations';
 import customersRouter from './routes/customers';
 import settingsRouter from './routes/settings';
 import purchasesRouter from './routes/purchases';
@@ -91,12 +91,6 @@ async function route(request: globalThis.Request, env: Env): Promise<globalThis.
     env,
   };
   const res = new Response();
-
-  // 原本 /api/uploads 的靜態圖片（需要登入）
-  if (url.pathname.startsWith('/api/uploads/')) {
-    if (await runHandlers([authMiddleware], req, res)) return res.toResponse();
-    return serveUpload(env, url.pathname.slice('/api/uploads/'.length));
-  }
 
   for (const [prefix, middlewares, routers] of mounts) {
     if (url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`)) continue;

@@ -13,6 +13,7 @@ import { Doughnut } from 'react-chartjs-2';
 ChartJS.register(ArcElement, Tooltip, Legend);
 
 const SOURCES = ['YouTube', 'Instagram', 'Line', '門市', '朋友介紹', '其他'];
+const SERVICE_TYPES = ['保養清潔', '維修', '升級', '諮詢', '其他'];
 const CITIES = ['台北市','新北市','基隆市','桃園市','新竹市','新竹縣','苗栗縣','台中市','彰化縣','南投縣','雲林縣','嘉義市','嘉義縣','台南市','高雄市','屏東縣','宜蘭縣','花蓮縣','台東縣','澎湖縣','金門縣','連江縣'];
 const CITY_COORDS: Record<string, { x: number; y: number }> = {
   '基隆市': { x: 218, y: 42 }, '台北市': { x: 198, y: 55 }, '新北市': { x: 210, y: 68 },
@@ -55,6 +56,7 @@ export default function CustomersPage() {
   const [form, setForm] = useState({ name: '', phone: '', email: '', source: '', city: '', district: '', address: '', note: '' });
 
   // Detail
+  const [svcForm, setSvcForm] = useState({ type: SERVICE_TYPES[0], date: new Date().toLocaleDateString('sv'), desc: '' });
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState<Customer | null>(null);
 
@@ -131,9 +133,11 @@ export default function CustomersPage() {
   };
 
   const addService = async (customerId: number, type: string, desc: string, date: string) => {
-    await api.post(`/customers/${customerId}/services`, { service_type: type, description: desc, service_date: date });
-    showToast('已新增服務紀錄');
-    viewCustomer(customerId);
+    try {
+      await api.post(`/customers/${customerId}/services`, { service_type: type, description: desc, service_date: date });
+      showToast('已新增服務紀錄');
+      await viewCustomer(customerId);
+    } catch (err: any) { showToast(err.message, 'danger'); }
   };
 
   const deleteService = async (customerId: number, sid: number) => {
@@ -323,6 +327,27 @@ export default function CustomersPage() {
                 </tbody>
               </table>
             ) : <p className="text-muted">尚無服務紀錄</p>}
+            {/* 新增一筆（原本只能刪不能加） */}
+            <div className="row g-2 align-items-end">
+              <div className="col-md-3">
+                <select className="form-select form-select-sm" value={svcForm.type} onChange={(e) => setSvcForm((f) => ({ ...f, type: e.target.value }))}>
+                  {SERVICE_TYPES.map((t) => <option key={t}>{t}</option>)}
+                </select>
+              </div>
+              <div className="col-md-3">
+                <input type="date" className="form-control form-control-sm" value={svcForm.date} onChange={(e) => setSvcForm((f) => ({ ...f, date: e.target.value }))} />
+              </div>
+              <div className="col-md-4">
+                <input type="text" className="form-control form-control-sm" placeholder="說明，例如：清灰、換散熱膏" value={svcForm.desc}
+                  onChange={(e) => setSvcForm((f) => ({ ...f, desc: e.target.value }))} />
+              </div>
+              <div className="col-md-2">
+                <button className="btn btn-sm btn-outline-primary w-100" disabled={!svcForm.desc.trim()}
+                  onClick={() => addService(detail.id, svcForm.type, svcForm.desc.trim(), svcForm.date).then(() => setSvcForm((f) => ({ ...f, desc: '' })))}>
+                  新增
+                </button>
+              </div>
+            </div>
 
             <div className="d-flex justify-content-between align-items-center mt-4 mb-2">
               <h6 className="mb-0">訂單（{detail.quotations?.length || 0}）</h6>
