@@ -66,7 +66,13 @@ interface Quotation {
   created_at: string;
   items?: QuotItem[];
   images?: QuotImage[];
+  /** 列表：關聯客戶的電話 */
+  customer_phone?: string | null;
+  /** 單筆：關聯的客戶資料 */
+  customer?: Customer | null;
 }
+
+const customerAddress = (c?: Customer | null) => (c ? [c.city, c.district, c.address].filter(Boolean).join(' ') : '');
 
 interface Customer {
   id: number;
@@ -74,6 +80,11 @@ interface Customer {
   phone: string;
   city: string;
   district: string;
+  address?: string;
+  email?: string;
+  source?: string;
+  note?: string;
+  order_count?: number;
 }
 
 interface CatNode {
@@ -103,6 +114,8 @@ export default function QuotationsPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
   const [searchText, setSearchText] = useState('');
+  // 從客戶管理點「訂單」過來（/quotations?customer=12）就只看這位客戶的
+  const [customerFilter, setCustomerFilter] = useState<{ id: number; name: string } | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const searchTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -139,6 +152,8 @@ export default function QuotationsPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [custDropdownOpen, setCustDropdownOpen] = useState(false);
   const [custSearchText, setCustSearchText] = useState('');
+  // 打了客戶清單裡沒有的名字：存檔時用這支電話建立新客戶
+  const [newCustPhone, setNewCustPhone] = useState('');
   const custSearchRef = useRef<HTMLDivElement>(null);
 
   // Category tree
@@ -158,6 +173,7 @@ export default function QuotationsPage() {
     try {
       let url = '/quotations?';
       if (statusFilter !== 'all') url += `status=${statusFilter}&`;
+      if (customerFilter) url += `customer_id=${customerFilter.id}&`;
       if (searchText) url += `search=${encodeURIComponent(searchText)}`;
       let data = await api.get<Quotation[]>(url);
       // Delivery status is filtered client-side
@@ -169,7 +185,7 @@ export default function QuotationsPage() {
       showToast(err.message, 'danger');
     }
     setLoading(false);
-  }, [statusFilter, typeFilter, searchText, showToast]);
+  }, [statusFilter, typeFilter, searchText, customerFilter, showToast]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -260,9 +276,31 @@ export default function QuotationsPage() {
     return { totalCost, totalPrice, profit, margin };
   };
 
+  // 從客戶管理過來：?view=ID 打開訂單、?customer=ID 只看這位客戶、?new=1&customer=ID 幫他開新訂單
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const view = Number(params.get('view'));
+    const customerId = Number(params.get('customer'));
+    if (view) viewQuotation(view);
+    if (customerId && params.get('new')) {
+      openForm(undefined, customerId);
+    } else if (customerId) {
+      api.get<Customer>(`/customers/${customerId}`)
+        .then((c) => setCustomerFilter({ id: c.id, name: c.name }))
+        .catch(() => setCustomerFilter({ id: customerId, name: `客戶 #${customerId}` }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const clearCustomerFilter = () => {
+    setCustomerFilter(null);
+    setPage(1);
+    window.history.replaceState(null, '', window.location.pathname);
+  };
+
   // ===== Actions =====
 
-  const openForm = async (quot?: Quotation) => {
+  const openForm = async (quot?: Quotation, presetCustomerId?: number) => {
     // Load categories, customers and inventory items in parallel
     const [cats, custs, invs] = await Promise.all([
       api.get<CatNode[]>('/inventory/categories').catch(() => []),
@@ -306,6 +344,15 @@ export default function QuotationsPage() {
       setFormItems([{ category: defaultCat, name: '', spec: '', cost: 0, price: 0, quantity: 1, inventory_id: null }]);
       setFormImages([]);
     }
+    setNewCustPhone('');
+    // 從客戶頁按「幫他開新訂單」：先帶好客戶和地區
+    const preset = !quot && presetCustomerId ? custs.find((c) => c.id === presetCustomerId) : undefined;
+    if (preset) {
+      setFormCustomerId(preset.id);
+      setFormCustomerName(preset.name);
+      setCustSearchText(preset.name);
+      if (preset.city) setFormDemandArea(preset.city + (preset.district ? ' ' + preset.district : ''));
+    }
     setCustDropdownOpen(false);
     setFormOpen(true);
   };
@@ -342,26 +389,25 @@ export default function QuotationsPage() {
     };
 
     try {
+      // 打了新名字：已經成交、或有填電話，就先建立客戶再關聯（尚未成交又沒電話的詢問先不建）
+      const name = data.customer_name.trim();
+      if (!data.customer_id && name && (data.status !== 'draft' || newCustPhone.trim())) {
+        const newCust = await api.post<{ id: number }>('/customers', {
+          name,
+          phone: newCustPhone.trim(),
+          city: data.demand_area.split(' ')[0] || '',
+          district: data.demand_area.split(' ').slice(1).join(' '),
+        });
+        data.customer_id = newCust.id;
+        showToast(`已建立客戶：${name}`);
+      }
+
       if (editQuot) {
         await api.put(`/quotations/${editQuot.id}`, data);
         showToast('已更新');
       } else {
         await api.post('/quotations', data);
         showToast('已新增，可在編輯中上傳圖片');
-      }
-
-      // Auto-create customer if no customer_id and status is not draft
-      if (!data.customer_id && data.customer_name && data.status !== 'draft') {
-        try {
-          const newCust = await api.post<Customer>('/customers', {
-            name: data.customer_name,
-            city: data.demand_area || '',
-          });
-          if (editQuot && newCust.id) {
-            await api.put(`/quotations/${editQuot.id}`, { ...data, customer_id: newCust.id });
-          }
-          showToast(`已自動建立客戶: ${data.customer_name}`);
-        } catch { /* ignore */ }
       }
 
       setFormOpen(false);
@@ -572,7 +618,13 @@ export default function QuotationsPage() {
             <option value="all">全部類型</option>
             {Object.entries(DELIVERY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
-          <input type="text" className="form-control form-control-sm" placeholder="搜尋訂單號/客戶..." value={searchText} onChange={e => setSearchText(e.target.value)} style={{ width: 200 }} />
+          <input type="text" className="form-control form-control-sm" placeholder="搜尋訂單號/客戶/電話..." value={searchText} onChange={e => setSearchText(e.target.value)} style={{ width: 200 }} />
+          {customerFilter && (
+            <span className="badge bg-dark d-inline-flex align-items-center gap-2 px-3">
+              只看：{customerFilter.name}
+              <button type="button" className="btn-close btn-close-white" style={{ fontSize: '0.6rem' }} onClick={clearCustomerFilter} aria-label="取消篩選" />
+            </span>
+          )}
         </div>
         <button className="btn btn-primary btn-sm" onClick={() => openForm()}><i className="bi bi-plus-lg" /> 新增訂單</button>
       </div>
@@ -598,7 +650,12 @@ export default function QuotationsPage() {
                 return (
                   <tr key={q.id}>
                     <td><strong>{q.quotation_no}</strong></td>
-                    <td>{q.customer_name || '-'}</td>
+                    <td>
+                      {q.customer_id ? (
+                        <a href={`/customers?id=${q.customer_id}`} title="看客戶資料">{q.customer_name || '-'}</a>
+                      ) : (q.customer_name || '-')}
+                      {q.customer_phone && <div className="small text-muted">{q.customer_phone}</div>}
+                    </td>
                     <td>
                       <span className={`badge ${st.badge}`}>{st.label}</span>
                       {q.delivery_status && (
@@ -657,7 +714,24 @@ export default function QuotationsPage() {
           return (
             <>
               <div className="row mb-3">
-                <div className="col-6"><strong>客戶:</strong> {detail.customer_name || '-'}</div>
+                <div className="col-12 mb-2">
+                  {detail.customer ? (
+                    <div className="border rounded-3 p-3 d-flex justify-content-between align-items-start gap-3 flex-wrap">
+                      <div>
+                        <div className="fw-semibold">{detail.customer.name}</div>
+                        <div className="small text-muted">
+                          {[detail.customer.phone, detail.customer.email, customerAddress(detail.customer), detail.customer.source && `來源：${detail.customer.source}`].filter(Boolean).join('　·　') || '還沒填聯絡資料'}
+                        </div>
+                        {detail.customer.note && <div className="small mt-1">{detail.customer.note}</div>}
+                      </div>
+                      <a className="btn btn-sm btn-outline-primary" href={`/customers?id=${detail.customer.id}`}>
+                        客戶資料{detail.customer.order_count ? `（${detail.customer.order_count} 張訂單）` : ''} ›
+                      </a>
+                    </div>
+                  ) : (
+                    <div><strong>客戶:</strong> {detail.customer_name || '-'} {detail.customer_name && <span className="small text-muted">（沒有關聯到客戶管理，編輯時從清單選一位就會關聯）</span>}</div>
+                  )}
+                </div>
                 <div className="col-6"><strong>狀態:</strong> <span className={`badge ${STATUS_MAP[detail.status]?.badge || ''}`}>{st.label}</span></div>
                 <div className="col-6 mt-2"><strong>訂金:</strong> ${Fmt.currency(detail.deposit)}</div>
                 <div className="col-6 mt-2"><strong>日期:</strong> {Fmt.date(detail.created_at)}</div>
@@ -769,6 +843,21 @@ export default function QuotationsPage() {
                 </div>
               )}
             </div>
+            {/* 選到客戶：顯示他的聯絡資料；打的是新名字：可以順手填電話，存檔時建立客戶 */}
+            {formCustomerId ? (() => {
+              const c = customers.find((x) => x.id === formCustomerId);
+              return (
+                <div className="small text-muted mt-1">
+                  <i className="bi bi-person-check text-success" /> {[c?.phone, customerAddress(c)].filter(Boolean).join(' · ') || '已關聯客戶'}
+                  {' '}<a href={`/customers?id=${formCustomerId}`} target="_blank" rel="noopener noreferrer">客戶資料 ›</a>
+                </div>
+              );
+            })() : custSearchText.trim() ? (
+              <div className="mt-1">
+                <input type="tel" className="form-control form-control-sm" placeholder="新客戶的電話（選填）" value={newCustPhone} onChange={(e) => setNewCustPhone(e.target.value)} />
+                <div className="small text-muted mt-1">清單裡沒有這位，成交或填了電話就會自動建立客戶</div>
+              </div>
+            ) : null}
           </div>
           <div className="col-md-3">
             <label className="form-label">狀態</label>

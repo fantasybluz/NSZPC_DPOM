@@ -6,6 +6,7 @@ import { useToast } from '@/contexts/ToastContext';
 import Modal from '@/components/ui/Modal';
 import PaginationComp from '@/components/ui/Pagination';
 import * as Fmt from '@/lib/format';
+import { STATUS_MAP, DELIVERY_MAP } from '@/lib/constants';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 import { Doughnut } from 'react-chartjs-2';
 
@@ -24,7 +25,13 @@ const CITY_COORDS: Record<string, { x: number; y: number }> = {
 };
 const SOURCE_COLORS: Record<string, string> = { YouTube: '#ff0000', Instagram: '#e4405f', Line: '#00c300', '門市': '#4a6cf7', '朋友介紹': '#f59e0b', '其他': '#6b7280' };
 
-interface Customer { id: number; name: string; phone: string; email: string; source: string; city: string; district: string; address: string; note: string; created_at: string; services?: any[]; quotations?: any[]; }
+interface CustomerOrder { id: number; quotation_no: string; status: string; delivery_status: string; item_title: string; total_price: number; created_at: string; }
+interface Customer {
+  id: number; name: string; phone: string; email: string; source: string; city: string; district: string; address: string; note: string; created_at: string;
+  services?: any[]; quotations?: CustomerOrder[];
+  // 列表才有：訂單數、成交金額（不含尚未成交、已取消）、最近一次下單
+  order_count?: number; total_spent?: number; last_order_at?: string | null;
+}
 interface Distribution { byCity: { city: string; count: number }[]; bySource: { source: string; count: number }[]; total: number; }
 
 export default function CustomersPage() {
@@ -66,6 +73,13 @@ export default function CustomersPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // 從訂單那邊點客戶過來（/customers?id=12）就直接打開他的資料
+  useEffect(() => {
+    const id = Number(new URLSearchParams(window.location.search).get('id'));
+    if (id) viewCustomer(id).catch((err) => showToast(err.message, 'danger'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Debounced search
   useEffect(() => {
     clearTimeout(searchTimer.current);
@@ -104,7 +118,9 @@ export default function CustomersPage() {
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm('確定刪除此客戶？')) return;
+    const c = customers.find((x) => x.id === id);
+    const msg = c?.order_count ? `確定刪除此客戶？他的 ${c.order_count} 張訂單會留著，只是不再關聯到客戶資料。` : '確定刪除此客戶？';
+    if (!confirm(msg)) return;
     try { await api.del(`/customers/${id}`); showToast('已刪除'); loadData(); } catch (err: any) { showToast(err.message, 'danger'); }
   };
 
@@ -163,17 +179,21 @@ export default function CustomersPage() {
           <div className="table-container">
             <div className="table-responsive">
               <table className="table table-hover table-sm">
-                <thead><tr><th>姓名</th><th>電話</th><th>來源</th><th>地區</th><th>建立日期</th><th>操作</th></tr></thead>
+                <thead><tr><th>姓名</th><th>電話</th><th>來源</th><th>地區</th><th className="text-end">訂單</th><th className="text-end">成交金額</th><th>最近下單</th><th>操作</th></tr></thead>
                 <tbody>
                   {paginated.length === 0 ? (
-                    <tr><td colSpan={6} className="text-center text-muted py-4">尚無客戶資料</td></tr>
+                    <tr><td colSpan={8} className="text-center text-muted py-4">尚無客戶資料</td></tr>
                   ) : paginated.map(c => (
                     <tr key={c.id}>
                       <td><strong className="cursor-pointer" onClick={() => viewCustomer(c.id)}>{c.name}</strong></td>
                       <td>{c.phone}</td>
                       <td>{sourceIcon(c.source)} {c.source}</td>
                       <td>{c.city}{c.district ? ' ' + c.district : ''}</td>
-                      <td className="small">{Fmt.date(c.created_at)}</td>
+                      <td className="text-end">
+                        {c.order_count ? <a href={`/quotations?customer=${c.id}`}>{c.order_count} 張</a> : <span className="text-muted">-</span>}
+                      </td>
+                      <td className="text-end">{c.total_spent ? `$${Fmt.currency(c.total_spent)}` : <span className="text-muted">-</span>}</td>
+                      <td className="small">{c.last_order_at ? Fmt.date(c.last_order_at) : <span className="text-muted">-</span>}</td>
                       <td>
                         <button className="btn btn-sm btn-outline-primary me-1" onClick={() => openForm(c)}><i className="bi bi-pencil" /></button>
                         <button className="btn btn-sm btn-outline-danger" onClick={() => handleDelete(c.id)}><i className="bi bi-trash" /></button>
@@ -265,7 +285,19 @@ export default function CustomersPage() {
 
       {/* 客戶詳情 Modal */}
       <Modal show={detailOpen} onClose={() => setDetailOpen(false)} title={detail?.name || ''} size="lg"
-        footer={<button className="btn btn-secondary" onClick={() => setDetailOpen(false)}>關閉</button>}>
+        footer={<>
+          {detail && (
+            <>
+              <button className="btn btn-outline-secondary me-auto" onClick={() => { setDetailOpen(false); openForm(detail); }}>
+                <i className="bi bi-pencil" /> 編輯客戶
+              </button>
+              <a className="btn btn-primary" href={`/quotations?new=1&customer=${detail.id}`}>
+                <i className="bi bi-plus-lg" /> 幫他開新訂單
+              </a>
+            </>
+          )}
+          <button className="btn btn-secondary" onClick={() => setDetailOpen(false)}>關閉</button>
+        </>}>
         {detail && (
           <>
             <div className="row mb-3">
@@ -292,19 +324,29 @@ export default function CustomersPage() {
               </table>
             ) : <p className="text-muted">尚無服務紀錄</p>}
 
+            <div className="d-flex justify-content-between align-items-center mt-4 mb-2">
+              <h6 className="mb-0">訂單（{detail.quotations?.length || 0}）</h6>
+              {detail.quotations?.length ? <a className="small" href={`/quotations?customer=${detail.id}`}>在訂單管理看全部 ›</a> : null}
+            </div>
             {detail.quotations?.length ? (
-              <>
-                <h6 className="mt-3">相關訂單</h6>
-                <table className="table table-sm">
-                  <thead><tr><th>單號</th><th>狀態</th><th className="text-end">金額</th><th>日期</th></tr></thead>
-                  <tbody>
-                    {detail.quotations.map((q: any) => (
-                      <tr key={q.id}><td>{q.quotation_no}</td><td>{q.status}</td><td className="text-end">${Fmt.currency(q.total_price)}</td><td>{Fmt.date(q.created_at)}</td></tr>
-                    ))}
-                  </tbody>
-                </table>
-              </>
-            ) : null}
+              <table className="table table-sm table-hover">
+                <thead><tr><th>單號</th><th>品項</th><th>狀態</th><th className="text-end">金額</th><th>日期</th></tr></thead>
+                <tbody>
+                  {detail.quotations.map((q) => (
+                    <tr key={q.id} className="cursor-pointer" onClick={() => { window.location.href = `/quotations?view=${q.id}`; }} title="打開這張訂單">
+                      <td><strong>{q.quotation_no}</strong></td>
+                      <td>{q.item_title || <span className="text-muted">-</span>}</td>
+                      <td>
+                        <span className={`badge ${STATUS_MAP[q.status]?.class || 'bg-secondary'}`}>{STATUS_MAP[q.status]?.label || q.status}</span>
+                        {q.delivery_status && <span className="badge bg-light text-dark ms-1">{DELIVERY_MAP[q.delivery_status] || q.delivery_status}</span>}
+                      </td>
+                      <td className="text-end">${Fmt.currency(q.total_price)}</td>
+                      <td>{Fmt.date(q.created_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <p className="text-muted">還沒有訂單</p>}
           </>
         )}
       </Modal>

@@ -355,6 +355,56 @@ describe('Customers API', () => {
 });
 
 // ========== 叫貨、結款 ==========
+describe('訂單關聯客戶', () => {
+  let customerId: number;
+  let quotationId: number;
+
+  it('訂單選了客戶：名字以客戶管理為準，列表帶電話、單筆帶客戶資料', async () => {
+    const c = await request('POST', '/api/customers', { name: `關聯客戶${unique}`, phone: '0912000111', city: '高雄市', district: '前鎮區' });
+    customerId = c.body.id;
+    const q = await request('POST', '/api/quotations', { customer_id: customerId, customer_name: '亂打的名字', status: 'draft', items: [] });
+    assert.equal(q.status, 200);
+    quotationId = q.body.id;
+
+    const list = await request('GET', `/api/quotations?customer_id=${customerId}`);
+    assert.equal(list.body.length, 1);
+    assert.equal(list.body[0].customer_name, `關聯客戶${unique}`);
+    assert.equal(list.body[0].customer_phone, '0912000111');
+
+    const byPhone = await request('GET', '/api/quotations?search=0912000111');
+    assert.ok(byPhone.body.some((x: any) => x.id === quotationId));
+
+    const one = await request('GET', `/api/quotations/${quotationId}`);
+    assert.equal(one.body.customer.phone, '0912000111');
+    assert.equal(one.body.customer.order_count, 1);
+  });
+
+  it('客戶列表有訂單數，客戶詳細的訂單有品項和出貨狀態', async () => {
+    const list = await request('GET', `/api/customers?search=${encodeURIComponent(`關聯客戶${unique}`)}`);
+    assert.equal(list.body[0].order_count, 1);
+    assert.equal(list.body[0].total_spent, 0); // 尚未成交不算
+    const detail = await request('GET', `/api/customers/${customerId}`);
+    assert.ok('item_title' in detail.body.quotations[0]);
+    assert.ok('delivery_status' in detail.body.quotations[0]);
+  });
+
+  it('客戶改名，訂單上的名字跟著改', async () => {
+    await request('PUT', `/api/customers/${customerId}`, { name: `改名客戶${unique}`, phone: '0912000111' });
+    const one = await request('GET', `/api/quotations/${quotationId}`);
+    assert.equal(one.body.customer_name, `改名客戶${unique}`);
+  });
+
+  it('刪掉有訂單的客戶：訂單留著、不再關聯', async () => {
+    const del = await request('DELETE', `/api/customers/${customerId}`);
+    assert.equal(del.status, 200);
+    const one = await request('GET', `/api/quotations/${quotationId}`);
+    assert.equal(one.status, 200);
+    assert.equal(one.body.customer_id, null);
+    assert.equal(one.body.customer_name, `改名客戶${unique}`);
+    await request('DELETE', `/api/quotations/${quotationId}`);
+  });
+});
+
 describe('Purchases API', () => {
   it('盤商、叫貨、到貨入庫、週／月篩選', async () => {
     const sup = await request('POST', '/api/purchases/suppliers', { name: `測試盤商${unique}`, default_tax_type: 'tax_included' });

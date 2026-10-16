@@ -4,22 +4,33 @@ import type { Customer, ServiceRecord } from '../types';
 
 const router = new Router();
 
+// 成交金額只算已經成立的單（不算尚未成交、已取消）
+const DEAL_STATUSES = "('deposit', 'pending', 'completed')";
+
 router.get('/', async (req: Request, res: Response) => {
   const { source, city, search } = req.query;
-  let sql = 'SELECT * FROM customers';
+  // 每個客戶的訂單數、成交金額、最近一次下單
+  let sql = `SELECT c.*, COALESCE(s.order_count, 0) AS order_count, COALESCE(s.total_spent, 0) AS total_spent, s.last_order_at
+    FROM customers c
+    LEFT JOIN (
+      SELECT customer_id, COUNT(*) AS order_count,
+             SUM(CASE WHEN status IN ${DEAL_STATUSES} THEN total_price ELSE 0 END) AS total_spent,
+             MAX(created_at) AS last_order_at
+      FROM quotations WHERE customer_id IS NOT NULL GROUP BY customer_id
+    ) s ON s.customer_id = c.id`;
   const params: any[] = [];
   const conditions: string[] = [];
   let idx = 1;
-  if (source) { conditions.push(`source = $${idx++}`); params.push(source); }
-  if (city) { conditions.push(`city = $${idx++}`); params.push(city); }
+  if (source) { conditions.push(`c.source = $${idx++}`); params.push(source); }
+  if (city) { conditions.push(`c.city = $${idx++}`); params.push(city); }
   if (search) {
-    conditions.push(`(name LIKE $${idx} OR phone LIKE $${idx + 1} OR email LIKE $${idx + 2})`);
+    conditions.push(`(c.name LIKE $${idx} OR c.phone LIKE $${idx + 1} OR c.email LIKE $${idx + 2})`);
     const s = `%${search}%`;
     params.push(s, s, s);
     idx += 3;
   }
   if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
-  sql += ' ORDER BY created_at DESC';
+  sql += ' ORDER BY c.created_at DESC';
   const { rows } = await pool.query(sql, params);
   res.json(rows);
 });
@@ -38,7 +49,10 @@ router.get('/:id', async (req: Request, res: Response) => {
   if (!c) return res.status(404).json({ error: '找不到客戶' });
   const { rows: services } = await pool.query('SELECT * FROM service_records WHERE customer_id = $1 ORDER BY service_date DESC', [c.id]);
   c.services = services as ServiceRecord[];
-  const { rows: quotations } = await pool.query('SELECT id, quotation_no, status, total_price, created_at FROM quotations WHERE customer_id = $1 ORDER BY created_at DESC', [c.id]);
+  const { rows: quotations } = await pool.query(
+    'SELECT id, quotation_no, status, delivery_status, item_title, total_price, created_at FROM quotations WHERE customer_id = $1 ORDER BY created_at DESC',
+    [c.id],
+  );
   c.quotations = quotations as any[];
   res.json(c);
 });
@@ -54,15 +68,19 @@ router.post('/', async (req: Request, res: Response) => {
 
 router.put('/:id', async (req: Request, res: Response) => {
   const { name, phone, email, source, city, district, address, note } = req.body;
-  await pool.query(
-    'UPDATE customers SET name=$1, phone=$2, email=$3, source=$4, city=$5, district=$6, address=$7, note=$8, updated_at=NOW() WHERE id=$9',
-    [name, phone || '', email || '', source || '', city || '', district || '', address || '', note || '', req.params.id]
-  );
+  await pool.batch([
+    ['UPDATE customers SET name=$1, phone=$2, email=$3, source=$4, city=$5, district=$6, address=$7, note=$8, updated_at=NOW() WHERE id=$9',
+      [name, phone || '', email || '', source || '', city || '', district || '', address || '', note || '', req.params.id]],
+    // 訂單上存的客戶名稱跟著改
+    ['UPDATE quotations SET customer_name = $1 WHERE customer_id = $2', [name, req.params.id]],
+  ]);
   res.json({ success: true });
 });
 
 router.delete('/:id', async (req: Request, res: Response) => {
   await pool.batch([
+    // 訂單留著（名字還在），只是不再關聯；不先拿掉的話外鍵會擋住刪除
+    ['UPDATE quotations SET customer_id = NULL WHERE customer_id = $1', [req.params.id]],
     ['DELETE FROM service_records WHERE customer_id = $1', [req.params.id]],
     ['DELETE FROM customers WHERE id = $1', [req.params.id]],
   ]);

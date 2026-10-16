@@ -83,19 +83,21 @@ router.get('/stats/monthly', async (_req: Request, res: Response) => {
 
 // 列表
 router.get('/', async (req: Request, res: Response) => {
-  const { status, search } = req.query;
-  let sql = 'SELECT * FROM quotations';
+  const { status, search, customer_id } = req.query;
+  // 帶上關聯客戶的電話（客戶管理那邊改了，這裡就跟著變）
+  let sql = 'SELECT q.*, c.phone AS customer_phone FROM quotations q LEFT JOIN customers c ON c.id = q.customer_id';
   const params: any[] = [];
   const conditions: string[] = [];
   let idx = 1;
-  if (status && status !== 'all') { conditions.push(`status = $${idx++}`); params.push(status); }
+  if (status && status !== 'all') { conditions.push(`q.status = $${idx++}`); params.push(status); }
+  if (customer_id) { conditions.push(`q.customer_id = $${idx++}`); params.push(parseInt(customer_id as string)); }
   if (search) {
-    conditions.push(`(quotation_no LIKE $${idx} OR customer_name LIKE $${idx + 1})`);
-    params.push(`%${search}%`, `%${search}%`);
-    idx += 2;
+    conditions.push(`(q.quotation_no LIKE $${idx} OR q.customer_name LIKE $${idx + 1} OR c.phone LIKE $${idx + 2})`);
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    idx += 3;
   }
   if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
-  sql += ' ORDER BY created_at DESC';
+  sql += ' ORDER BY q.created_at DESC';
   const { rows } = await pool.query(sql, params);
   res.json(rows);
 });
@@ -109,12 +111,32 @@ router.get('/:id', async (req: Request, res: Response) => {
   q.items = items as QuotationItem[];
   const { rows: images } = await pool.query('SELECT * FROM quotation_images WHERE quotation_id = $1 ORDER BY id', [q.id]);
   q.images = images as QuotationImage[];
+  // 關聯的客戶（電話、地址、來源，以及他總共下過幾張單）
+  if (q.customer_id) {
+    const { rows: [customer] } = await pool.query(
+      `SELECT c.id, c.name, c.phone, c.email, c.source, c.city, c.district, c.address, c.note,
+              (SELECT COUNT(*) FROM quotations WHERE customer_id = c.id) AS order_count
+       FROM customers c WHERE c.id = $1`,
+      [q.customer_id],
+    );
+    (q as any).customer = customer || null;
+  }
   res.json(q);
 });
 
+/** 有選客戶就用客戶管理裡的名字（避免兩邊不一致）；客戶已經不在就當作沒選 */
+async function resolveCustomer(customerId: unknown, customerName: unknown): Promise<{ id: number | null; name: string }> {
+  const id = parseInt(String(customerId ?? ''));
+  const typed = typeof customerName === 'string' ? customerName.trim() : '';
+  if (!Number.isFinite(id)) return { id: null, name: typed };
+  const { rows: [c] } = await pool.query('SELECT id, name FROM customers WHERE id = $1', [id]);
+  return c ? { id: c.id, name: c.name } : { id: null, name: typed };
+}
+
 // 新增
 router.post('/', async (req: Request, res: Response) => {
-  const { customer_id, customer_name, items, status, deposit, service_fee, note, item_title, demand_area, ship_date, delivery_status, qc_data } = req.body;
+  const { customer_id: rawCustomerId, customer_name: rawCustomerName, items, status, deposit, service_fee, note, item_title, demand_area, ship_date, delivery_status, qc_data } = req.body;
+  const { id: customer_id, name: customer_name } = await resolveCustomer(rawCustomerId, rawCustomerName);
   const quotation_no = await generateQuotationNo();
   const initStatus = status && typeof status === 'string' ? status : 'draft';
 
@@ -153,9 +175,10 @@ router.post('/', async (req: Request, res: Response) => {
 
 // 更新
 router.put('/:id', async (req: Request, res: Response) => {
-  const { customer_id, customer_name, items, deposit, service_fee, status, note, item_title, demand_area, ship_date, delivery_status, qc_data } = req.body;
+  const { customer_id: rawCustomerId, customer_name: rawCustomerName, items, deposit, service_fee, status, note, item_title, demand_area, ship_date, delivery_status, qc_data } = req.body;
   const qId = parseInt(req.params.id as string);
   const newStatus = status || 'draft';
+  const { id: customer_id, name: customer_name } = await resolveCustomer(rawCustomerId, rawCustomerName);
 
   // 讀目前狀態與扣帳旗標
   const { rows: curRows } = await pool.query('SELECT status, stock_deducted FROM quotations WHERE id = $1', [qId]);
