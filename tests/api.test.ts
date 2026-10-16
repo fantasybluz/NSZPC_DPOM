@@ -1,379 +1,373 @@
-import { describe, it, before, after } from 'node:test';
+// API 整合測試：打本機的 Worker（npm run dev，預設 http://localhost:8787）。
+// 本機開發不經過 Cloudflare Access，以 .dev.vars 的 DEV_USER_EMAIL 登入（要在 BOOTSTRAP_ADMIN_EMAILS 裡，會自動建成管理員）。
+//
+//   npm run dev          # 另一個終端機
+//   npm test             # 或 BASE_URL=http://localhost:8788 npm test
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
-import path from 'node:path';
-import fs from 'node:fs';
 
-// 清除舊測試資料庫
-const testDbPath = path.join(__dirname, '..', 'data', 'test.db');
-if (fs.existsSync(testDbPath)) fs.unlinkSync(testDbPath);
-
-process.env.NODE_ENV = 'test';
-
-let server: http.Server;
-let baseUrl: string;
-let adminToken: string;
+const BASE_URL = process.env.BASE_URL || 'http://localhost:8787';
 
 interface ApiResponse {
   status: number;
   body: any;
+  headers: Headers;
 }
 
-function request(method: string, urlPath: string, body?: any, token?: string): Promise<ApiResponse> {
-  return new Promise((resolve, reject) => {
-    const url = new URL(urlPath, baseUrl);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['x-token'] = token;
-    const opts: http.RequestOptions = {
-      method,
-      hostname: url.hostname,
-      port: url.port,
-      path: url.pathname + url.search,
-      headers,
-    };
-
-    const req = http.request(opts, (res) => {
-      let data = '';
-      res.on('data', (chunk: string) => data += chunk);
-      res.on('end', () => {
-        try {
-          resolve({ status: res.statusCode!, body: JSON.parse(data) });
-        } catch {
-          resolve({ status: res.statusCode!, body: data });
-        }
-      });
-    });
-    req.on('error', reject);
-    if (body) req.write(JSON.stringify(body));
-    req.end();
+async function request(method: string, path: string, body?: unknown): Promise<ApiResponse> {
+  const res = await fetch(new URL(path, BASE_URL), {
+    method,
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
   });
+  const text = await res.text();
+  let parsed: any = text;
+  try { parsed = JSON.parse(text); } catch { /* CSV 之類的 */ }
+  return { status: res.status, body: parsed, headers: res.headers };
 }
 
-before(async () => {
-  const express = (await import('express')).default;
-  const app = express();
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true }));
-  app.use(express.static(path.join(__dirname, '..', 'public')));
+const unique = `${Date.now()}`;
 
-  const authModule = await import('../src/routes/auth');
-  const { authMiddleware } = authModule;
-  app.use('/api/auth', authModule.default);
-  app.use('/api/inventory', authMiddleware, (await import('../src/routes/inventory')).default);
-  app.use('/api/quotations', authMiddleware, (await import('../src/routes/quotations')).default);
-  app.use('/api/customers', authMiddleware, (await import('../src/routes/customers')).default);
-  app.use('/api/suppliers', authMiddleware, (await import('../src/routes/suppliers')).default);
-  app.use('/api/settings', authMiddleware, (await import('../src/routes/settings')).default);
-
-  await new Promise<void>((resolve) => {
-    server = app.listen(0, '127.0.0.1', () => {
-      const addr = server.address() as { port: number };
-      baseUrl = `http://127.0.0.1:${addr.port}`;
-      resolve();
-    });
-  });
-
-  const res = await request('POST', '/api/auth/login', { username: 'admin', password: 'admin' });
-  adminToken = res.body.token;
-});
-
-after(async () => {
-  if (server) server.close();
-  if (fs.existsSync(testDbPath)) fs.unlinkSync(testDbPath);
-});
-
-// ========== 認證測試 ==========
+// ========== 登入 ==========
 describe('Auth API', () => {
-  it('應該拒絕錯誤的登入', async () => {
-    const res = await request('POST', '/api/auth/login', { username: 'admin', password: 'wrong' });
-    assert.equal(res.status, 401);
+  it('取得當前使用者（Access 的 email，第一次自動建成管理員）', async () => {
+    const res = await request('GET', '/api/auth/me');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.role, 'admin');
+    assert.ok(res.body.email.includes('@'));
   });
 
-  it('應該成功登入', async () => {
+  it('原本的帳密登入已經拿掉', async () => {
     const res = await request('POST', '/api/auth/login', { username: 'admin', password: 'admin' });
-    assert.equal(res.status, 200);
-    assert.ok(res.body.token);
-    assert.equal(res.body.user.role, 'admin');
+    assert.equal(res.status, 404);
   });
 
-  it('應該拒絕未認證的請求', async () => {
-    const res = await request('GET', '/api/inventory');
-    assert.equal(res.status, 401);
-  });
-
-  it('取得當前使用者資料', async () => {
-    const res = await request('GET', '/api/auth/me', null, adminToken);
+  it('不需認證的版本資訊', async () => {
+    const res = await request('GET', '/api/version');
     assert.equal(res.status, 200);
-    assert.equal(res.body.username, 'admin');
+    assert.ok(res.body.version);
   });
 });
 
-// ========== 使用者管理測試 ==========
+// ========== 使用者管理 ==========
 describe('User Management', () => {
   let testUserId: number;
 
-  it('新增使用者', async () => {
+  it('新增使用者要 email', async () => {
+    const bad = await request('POST', '/api/auth/users', { email: 'not-an-email' });
+    assert.equal(bad.status, 400);
     const res = await request('POST', '/api/auth/users', {
-      username: 'testuser', password: 'test123', display_name: '測試用戶',
-      role: 'user', permissions: ['dashboard', 'inventory']
-    }, adminToken);
+      email: `staff-${unique}@example.com`, display_name: '測試員工', role: 'user', permissions: ['dashboard', 'inventory'],
+    });
     assert.equal(res.status, 200);
-    assert.ok(res.body.id);
     testUserId = res.body.id;
   });
 
+  it('同一個 email 不能新增兩次', async () => {
+    const res = await request('POST', '/api/auth/users', { email: `STAFF-${unique}@example.com` });
+    assert.equal(res.status, 400);
+  });
+
   it('取得所有使用者', async () => {
-    const res = await request('GET', '/api/auth/users', null, adminToken);
+    const res = await request('GET', '/api/auth/users');
     assert.equal(res.status, 200);
-    assert.ok(res.body.length >= 2);
+    assert.ok(res.body.some((u: any) => u.id === testUserId && u.permissions.includes('inventory')));
   });
 
   it('更新使用者權限', async () => {
     const res = await request('PUT', `/api/auth/users/${testUserId}`, {
-      display_name: '測試用戶更新', role: 'user',
-      permissions: ['dashboard', 'inventory', 'quotations'], is_active: 1
-    }, adminToken);
+      display_name: '測試員工更新', role: 'user', permissions: ['dashboard', 'quotations'], is_active: 1,
+    });
     assert.equal(res.status, 200);
   });
 
   it('不能刪除自己', async () => {
-    const users = await request('GET', '/api/auth/users', null, adminToken);
-    const admin = users.body.find((u: any) => u.username === 'admin');
-    const res = await request('DELETE', `/api/auth/users/${admin.id}`, null, adminToken);
+    const me = await request('GET', '/api/auth/me');
+    const res = await request('DELETE', `/api/auth/users/${me.body.userId}`);
     assert.equal(res.status, 400);
   });
 
   it('刪除使用者', async () => {
-    const res = await request('DELETE', `/api/auth/users/${testUserId}`, null, adminToken);
+    const res = await request('DELETE', `/api/auth/users/${testUserId}`);
     assert.equal(res.status, 200);
   });
 });
 
-// ========== 庫存測試 ==========
-describe('Inventory API', () => {
-  let itemId: number;
-
-  it('取得分類列表', async () => {
-    const res = await request('GET', '/api/inventory/categories', null, adminToken);
+// ========== 分類 ==========
+describe('Categories API', () => {
+  it('預設分類（含子分類）', async () => {
+    const res = await request('GET', '/api/inventory/categories');
     assert.equal(res.status, 200);
     assert.ok(res.body.length >= 9);
+    const cpu = res.body.find((c: any) => c.name === 'CPU');
+    const amd = cpu.children.find((c: any) => c.name === 'AMD');
+    assert.deepEqual(amd.children.map((c: any) => c.name), ['AM4', 'AM5']);
   });
 
-  it('新增庫存商品', async () => {
+  it('拖拉排序（原本會被 /categories/:id 攔走）', async () => {
+    const created = await request('POST', '/api/inventory/categories', { name: `排序測試-${unique}` });
+    const other = await request('POST', '/api/inventory/categories', { name: `排序測試B-${unique}` });
+    const res = await request('PUT', '/api/inventory/categories/reorder', {
+      items: [{ id: other.body.id, sort_order: 1, parent_id: null }, { id: created.body.id, sort_order: 2, parent_id: other.body.id }],
+    });
+    assert.equal(res.status, 200);
+    const tree = await request('GET', '/api/inventory/categories');
+    const parent = tree.body.find((c: any) => c.id === other.body.id);
+    assert.equal(parent.sort_order, 1);
+    assert.equal(parent.children[0].id, created.body.id);
+    // 刪掉父分類，子分類一起刪
+    assert.equal((await request('DELETE', `/api/inventory/categories/${other.body.id}`)).status, 200);
+    const after = await request('GET', '/api/inventory/categories');
+    assert.ok(!JSON.stringify(after.body).includes(`排序測試-${unique}`));
+  });
+});
+
+// ========== 庫存與訂單扣帳 ==========
+describe('Inventory + quotation stock', () => {
+  let itemId: number;
+  let quotId: number;
+
+  it('新增商品（含初始庫存）', async () => {
     const res = await request('POST', '/api/inventory', {
-      category_id: 1, name: 'AMD Ryzen 5 7600X', brand: 'AMD', model: '7600X',
-      spec: '6C/12T 4.7GHz', cost: 4500, price: 5990, quantity: 10, min_quantity: 3
-    }, adminToken);
+      category_id: 1, name: `AMD Ryzen 5 7600X ${unique}`, brand: 'AMD', spec: '6C/12T', price: 5990, min_quantity: 3,
+      initial_qty: 5, initial_cost: 4000, supplier: '原價屋',
+    });
     assert.equal(res.status, 200);
     itemId = res.body.id;
   });
 
-  it('取得庫存列表', async () => {
-    const res = await request('GET', '/api/inventory', null, adminToken);
+  it('再進貨一批（不同成本）', async () => {
+    const res = await request('POST', `/api/inventory/${itemId}/stock-in`, { quantity: 5, unit_cost: 5000, supplier: '欣亞' });
     assert.equal(res.status, 200);
-    assert.ok(res.body.length >= 1);
+    const detail = await request('GET', `/api/inventory/${itemId}/detail`);
+    assert.equal(detail.body.quantity, 10);
+    assert.equal(detail.body.avg_cost, 4500);
+    assert.equal(detail.body.batches.length, 2);
+    assert.equal(detail.body.category_path, 'CPU');
   });
 
-  it('搜尋庫存', async () => {
-    const res = await request('GET', '/api/inventory?search=AMD', null, adminToken);
-    assert.equal(res.status, 200);
-    assert.ok(res.body.some((i: any) => i.name.includes('AMD')));
+  it('庫存列表、搜尋、分類篩選、統計', async () => {
+    const list = await request('GET', `/api/inventory?search=${encodeURIComponent(unique)}`);
+    assert.equal(list.body.length, 1);
+    const byCat = await request('GET', '/api/inventory?category_id=1');
+    assert.ok(byCat.body.some((i: any) => i.id === itemId));
+    const stats = await request('GET', '/api/inventory/stats');
+    assert.ok(stats.body.byCategory.some((c: any) => c.category === 'CPU' && c.total_qty >= 10));
   });
 
-  it('取得庫存統計', async () => {
-    const res = await request('GET', '/api/inventory/stats', null, adminToken);
-    assert.equal(res.status, 200);
-    assert.ok(res.body.summary);
-  });
-
-  it('更新庫存商品', async () => {
-    const res = await request('PUT', `/api/inventory/${itemId}`, {
-      category_id: 1, name: 'AMD Ryzen 5 7600X', brand: 'AMD', model: '7600X',
-      spec: '6C/12T 4.7GHz', cost: 4300, price: 5790, quantity: 8, min_quantity: 3
-    }, adminToken);
-    assert.equal(res.status, 200);
-  });
-
-  it('刪除庫存商品', async () => {
-    const res = await request('DELETE', `/api/inventory/${itemId}`, null, adminToken);
-    assert.equal(res.status, 200);
-  });
-});
-
-// ========== 估價單測試 ==========
-describe('Quotations API', () => {
-  let quotId: number;
-
-  it('新增估價單', async () => {
+  it('成立的訂單依 FIFO 扣庫存', async () => {
     const res = await request('POST', '/api/quotations', {
-      customer_name: '王大明', deposit: 5000, service_fee: 1500, note: '整機組裝',
+      customer_name: '王大明', status: 'deposit', deposit: 5000, service_fee: 1500,
       items: [
-        { category: 'CPU', name: 'AMD R5-7600X', spec: '6C/12T', cost: 4500, price: 5990, quantity: 1 },
-        { category: '顯示卡', name: 'RTX 4060 Ti', spec: '8GB', cost: 10000, price: 12800, quantity: 1 },
-        { category: '記憶體', name: 'DDR5 16GB', spec: '5600MHz', cost: 1200, price: 1590, quantity: 2 },
-        { category: '硬碟', name: 'NVMe 1TB', spec: 'Gen4', cost: 2000, price: 2690, quantity: 1 },
-        { category: '硬碟', name: 'HDD 2TB', spec: '7200RPM', cost: 1500, price: 1990, quantity: 1 },
-      ]
-    }, adminToken);
-    assert.equal(res.status, 200);
+        { category: 'CPU', name: 'R5-7600X', cost: 4500, price: 5990, quantity: 4, inventory_id: itemId },
+        { category: 'CPU', name: 'R5-7600X（第二台）', cost: 4500, price: 5990, quantity: 3, inventory_id: itemId },
+        { category: '其他', name: '線材', cost: 100, price: 200, quantity: 1 },
+      ],
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.ok(res.body.quotation_no.startsWith('Q'));
     quotId = res.body.id;
+
+    const detail = await request('GET', `/api/inventory/${itemId}/detail`);
+    assert.equal(detail.body.quantity, 3);
+    const [first, second] = detail.body.batches;
+    assert.equal(first.remaining, 0); // 先扣完 4000 的那批
+    assert.equal(second.remaining, 3);
+    const q = await request('GET', `/api/quotations/${quotId}`);
+    assert.equal(q.body.stock_deducted, 1);
+    assert.equal(q.body.items.length, 3);
   });
 
-  it('取得所有估價單', async () => {
-    const res = await request('GET', '/api/quotations', null, adminToken);
-    assert.equal(res.status, 200);
-    assert.ok(res.body.length >= 1);
+  it('庫存不夠時不能成立，整張單不會留下來', async () => {
+    const res = await request('POST', '/api/quotations', {
+      customer_name: `庫存不足${unique}`, status: 'pending',
+      items: [{ name: 'R5', cost: 1, price: 1, quantity: 99, inventory_id: itemId }],
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /庫存不足/);
+    const list = await request('GET', `/api/quotations?search=${encodeURIComponent(`庫存不足${unique}`)}`);
+    assert.equal(list.body.length, 0);
   });
 
-  it('取得單一估價單含明細', async () => {
-    const res = await request('GET', `/api/quotations/${quotId}`, null, adminToken);
-    assert.equal(res.status, 200);
-    assert.equal(res.body.customer_name, '王大明');
-    assert.equal(res.body.service_fee, 1500);
-    assert.equal(res.body.items.length, 5);
-  });
-
-  it('更新估價單狀態', async () => {
+  it('改回草稿會把庫存加回去', async () => {
     const res = await request('PUT', `/api/quotations/${quotId}`, {
-      customer_name: '王大明', status: 'deposit', deposit: 10000, service_fee: 1500,
-      items: [{ category: 'CPU', name: 'AMD R5-7600X', cost: 4500, price: 5990, quantity: 1 }]
-    }, adminToken);
+      customer_name: '王大明', status: 'draft', items: [{ name: 'R5', cost: 4500, price: 5990, quantity: 7, inventory_id: itemId }],
+    });
     assert.equal(res.status, 200);
+    const detail = await request('GET', `/api/inventory/${itemId}/detail`);
+    assert.equal(detail.body.quantity, 10);
   });
 
-  it('取得估價單統計', async () => {
-    const res = await request('GET', '/api/quotations/stats/summary', null, adminToken);
+  it('改成完成再扣一次，刪單時還原', async () => {
+    const res = await request('PUT', `/api/quotations/${quotId}`, {
+      customer_name: '王大明', status: 'completed', items: [{ name: 'R5', cost: 4500, price: 5990, quantity: 2, inventory_id: itemId }],
+    });
     assert.equal(res.status, 200);
-    assert.ok(Array.isArray(res.body));
+    assert.equal((await request('GET', `/api/inventory/${itemId}/detail`)).body.quantity, 8);
+
+    const profit = await request('GET', '/api/reports/profit');
+    assert.equal(profit.status, 200);
+    assert.ok(profit.body.total.count >= 1);
+
+    assert.equal((await request('DELETE', `/api/quotations/${quotId}`)).status, 200);
+    assert.equal((await request('GET', `/api/inventory/${itemId}/detail`)).body.quantity, 10);
   });
 
-  it('依狀態篩選', async () => {
-    const res = await request('GET', '/api/quotations?status=deposit', null, adminToken);
+  it('手動出貨', async () => {
+    const res = await request('POST', `/api/inventory/${itemId}/stock-out`, { quantity: 6 });
     assert.equal(res.status, 200);
-    assert.ok(res.body.every((q: any) => q.status === 'deposit'));
+    assert.equal(res.body.totalCost, 5 * 4000 + 1 * 5000);
+    assert.equal((await request('GET', `/api/inventory/${itemId}/detail`)).body.quantity, 4);
   });
 
-  it('刪除估價單', async () => {
-    const res = await request('DELETE', `/api/quotations/${quotId}`, null, adminToken);
-    assert.equal(res.status, 200);
+  it('估價單統計', async () => {
+    const summary = await request('GET', '/api/quotations/stats/summary');
+    assert.ok(Array.isArray(summary.body));
+    const monthly = await request('GET', '/api/quotations/stats/monthly');
+    assert.match(monthly.body.month, /^\d{4}-\d{2}$/);
+  });
+
+  it('刪除商品', async () => {
+    assert.equal((await request('DELETE', `/api/inventory/${itemId}`)).status, 200);
+    assert.equal((await request('GET', `/api/inventory/${itemId}/detail`)).status, 404);
   });
 });
 
-// ========== 客戶管理測試 ==========
+// ========== 報價單圖片（R2） ==========
+describe('Quotation images', () => {
+  it('上傳、讀取、刪除', async () => {
+    const q = await request('POST', '/api/quotations', { customer_name: '圖片測試', items: [] });
+    const form = new FormData();
+    const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), (c) => c.charCodeAt(0));
+    form.append('images', new Blob([png], { type: 'image/png' }), 'dot.png');
+    const up = await fetch(new URL(`/api/quotations/${q.body.id}/images`, BASE_URL), { method: 'POST', body: form });
+    assert.equal(up.status, 200);
+    const [img] = await up.json();
+
+    const get = await fetch(new URL(`/api/quotations/${q.body.id}/images/${img.filename}`, BASE_URL));
+    assert.equal(get.status, 200);
+    assert.equal(get.headers.get('content-type'), 'image/png');
+    assert.equal((await get.arrayBuffer()).byteLength, png.byteLength);
+
+    const notImage = new FormData();
+    notImage.append('images', new Blob(['<script>'], { type: 'text/html' }), 'x.html');
+    const bad = await fetch(new URL(`/api/quotations/${q.body.id}/images`, BASE_URL), { method: 'POST', body: notImage });
+    assert.equal(bad.status, 400);
+
+    assert.equal((await request('DELETE', `/api/quotations/${q.body.id}/images/${img.id}`)).status, 200);
+    assert.equal((await request('GET', `/api/quotations/${q.body.id}/images/${img.filename}`)).status, 404);
+    assert.equal((await request('DELETE', `/api/quotations/${q.body.id}`)).status, 200);
+  });
+});
+
+// ========== 客戶 ==========
 describe('Customers API', () => {
   let custId: number;
 
-  it('新增客戶', async () => {
+  it('新增、搜尋、篩選、統計', async () => {
     const res = await request('POST', '/api/customers', {
-      name: '陳小明', phone: '0912345678', email: 'test@example.com',
-      source: 'YouTube', city: '台北市', district: '中山區'
-    }, adminToken);
+      name: `陳小明${unique}`, phone: '0912345678', email: 'test@example.com', source: 'YouTube', city: '台北市', district: '中山區',
+    });
     assert.equal(res.status, 200);
     custId = res.body.id;
+    assert.equal((await request('GET', `/api/customers?search=${encodeURIComponent(unique)}`)).body.length, 1);
+    assert.ok((await request('GET', '/api/customers?source=YouTube')).body.every((c: any) => c.source === 'YouTube'));
+    const dist = await request('GET', '/api/customers/stats/distribution');
+    assert.ok(dist.body.byCity && dist.body.bySource && dist.body.total >= 1);
   });
 
-  it('取得客戶列表', async () => {
-    const res = await request('GET', '/api/customers', null, adminToken);
-    assert.equal(res.status, 200);
-    assert.ok(res.body.length >= 1);
+  it('服務紀錄', async () => {
+    assert.equal((await request('POST', `/api/customers/${custId}/services`, { service_type: '組裝', description: '全新主機組裝', service_date: '2026-03-23' })).status, 200);
+    const res = await request('GET', `/api/customers/${custId}`);
+    assert.equal(res.body.services.length, 1);
   });
 
-  it('搜尋客戶', async () => {
-    const res = await request('GET', '/api/customers?search=陳', null, adminToken);
-    assert.equal(res.status, 200);
-    assert.ok(res.body.some((c: any) => c.name.includes('陳')));
-  });
-
-  it('依來源篩選', async () => {
-    const res = await request('GET', '/api/customers?source=YouTube', null, adminToken);
-    assert.equal(res.status, 200);
-    assert.ok(res.body.every((c: any) => c.source === 'YouTube'));
-  });
-
-  it('取得客戶地區分佈統計', async () => {
-    const res = await request('GET', '/api/customers/stats/distribution', null, adminToken);
-    assert.equal(res.status, 200);
-    assert.ok(res.body.byCity);
-    assert.ok(res.body.bySource);
-  });
-
-  it('新增服務紀錄', async () => {
-    const res = await request('POST', `/api/customers/${custId}/services`, {
-      service_type: '組裝', description: '全新主機組裝', service_date: '2026-03-23'
-    }, adminToken);
-    assert.equal(res.status, 200);
-  });
-
-  it('取得客戶含服務紀錄', async () => {
-    const res = await request('GET', `/api/customers/${custId}`, null, adminToken);
-    assert.equal(res.status, 200);
-    assert.equal(res.body.name, '陳小明');
-    assert.ok(res.body.services.length >= 1);
-  });
-
-  it('更新客戶', async () => {
-    const res = await request('PUT', `/api/customers/${custId}`, {
-      name: '陳小明', phone: '0912345678', source: 'Instagram', city: '新北市'
-    }, adminToken);
-    assert.equal(res.status, 200);
-  });
-
-  it('刪除客戶', async () => {
-    const res = await request('DELETE', `/api/customers/${custId}`, null, adminToken);
-    assert.equal(res.status, 200);
+  it('更新、刪除', async () => {
+    assert.equal((await request('PUT', `/api/customers/${custId}`, { name: '陳小明', source: 'Instagram', city: '新北市' })).status, 200);
+    assert.equal((await request('DELETE', `/api/customers/${custId}`)).status, 200);
   });
 });
 
-// ========== 盤商報價測試 ==========
+// ========== 盤商報價 ==========
 describe('Suppliers API', () => {
-  it('解析 Line 報價訊息', async () => {
-    const res = await request('POST', '/api/suppliers/parse', {
-      supplier_name: '原價屋',
-      text: `AMD R5-7600X $4,590\nRTX 4060 Ti $12,800\nB760M AORUS ELITE AX $3,990\nDDR5 16GB 5600MHz $1,290\nWD SN770 1TB $2,090`
-    }, adminToken);
+  it('解析 Line 報價訊息（多筆一次寫入）', async () => {
+    const lines = Array.from({ length: 80 }, (_, i) => `測試商品${unique}-${i} $${1000 + i}`).join('\n');
+    const res = await request('POST', '/api/suppliers/parse', { supplier_name: '原價屋', text: lines });
     assert.equal(res.status, 200);
-    assert.equal(res.body.count, 5);
-    assert.equal(res.body.parsed[0].price, 4590);
+    assert.equal(res.body.count, 80);
+    const prices = await request('GET', `/api/suppliers/prices?search=${encodeURIComponent(unique)}`);
+    assert.equal(prices.body.length, 80);
   });
 
   it('解析多種格式報價', async () => {
-    const res = await request('POST', '/api/suppliers/parse', {
-      text: `i5-13400F NT$5,490\nB660M：3290\n海韻 650W 2890元`
-    }, adminToken);
-    assert.equal(res.status, 200);
+    const res = await request('POST', '/api/suppliers/parse', { text: 'i5-13400F NT$5,490\nB660M：3290\n海韻 650W 2890元' });
     assert.ok(res.body.count >= 2);
-  });
-
-  it('取得歷史報價', async () => {
-    const res = await request('GET', '/api/suppliers/prices', null, adminToken);
-    assert.equal(res.status, 200);
-    assert.ok(res.body.length >= 5);
-  });
-
-  it('搜尋報價', async () => {
-    const res = await request('GET', '/api/suppliers/prices?search=RTX', null, adminToken);
-    assert.equal(res.status, 200);
-    assert.ok(res.body.some((p: any) => p.product_name.includes('RTX')));
   });
 });
 
-// ========== 設定測試 ==========
+// ========== 叫貨、結款 ==========
+describe('Purchases API', () => {
+  it('盤商、叫貨、到貨入庫、週／月篩選', async () => {
+    const sup = await request('POST', '/api/purchases/suppliers', { name: `測試盤商${unique}`, default_tax_type: 'tax_included' });
+    assert.equal(sup.status, 200);
+    const inv = await request('POST', '/api/inventory', { category_id: 1, name: `叫貨測試${unique}`, price: 100 });
+    const order = await request('POST', '/api/purchases/orders', {
+      supplier_id: sup.body.id, order_date: '2026-10-14',
+      items: [{ product_name: 'A', quantity: 2, unit_price: 1050 }, { product_name: 'B', quantity: 1, unit_price: 2100 }],
+    });
+    assert.equal(order.status, 200);
+    const detail = await request('GET', `/api/purchases/orders/${order.body.id}`);
+    assert.equal(detail.body.items.length, 2);
+    assert.equal(detail.body.total_amount, 4200);
+    assert.equal(detail.body.tax_amount, 200);
+
+    // 2026-10-14 是週三，同一週是 10/12（一）～10/18（日）
+    const sameWeek = await request('GET', '/api/purchases/orders?week=2026-10-18');
+    assert.ok(sameWeek.body.some((o: any) => o.id === order.body.id));
+    const nextWeek = await request('GET', '/api/purchases/orders?week=2026-10-19');
+    assert.ok(!nextWeek.body.some((o: any) => o.id === order.body.id));
+    const month = await request('GET', '/api/purchases/orders?month=2026-10');
+    assert.ok(month.body.some((o: any) => o.id === order.body.id));
+
+    const receive = await request('POST', `/api/purchases/orders/${order.body.id}/receive`, {
+      stock_items: [{ inventory_id: inv.body.id, quantity: 3, unit_cost: 1000 }],
+    });
+    assert.equal(receive.status, 200);
+    const stocked = await request('GET', `/api/inventory/${inv.body.id}/detail`);
+    assert.equal(stocked.body.quantity, 3);
+    assert.match(stocked.body.batches[0].note, /叫貨單/);
+
+    assert.equal((await request('GET', '/api/purchases/stats')).status, 200);
+
+    assert.equal((await request('DELETE', `/api/purchases/orders/${order.body.id}`)).status, 200);
+    assert.equal((await request('DELETE', `/api/purchases/suppliers/${sup.body.id}`)).status, 200);
+    assert.equal((await request('DELETE', `/api/inventory/${inv.body.id}`)).status, 200);
+  });
+});
+
+// ========== 報表 ==========
+describe('Reports API', () => {
+  it('維修工單編號、通知、CSV 匯出', async () => {
+    const repair = await request('POST', '/api/reports/repairs', { customer_name: `維修測試${unique}`, device_name: '主機' });
+    assert.match(repair.body.repair_no, /^R\d{11}$/);
+    assert.equal((await request('GET', '/api/reports/notifications')).status, 200);
+    const csv = await request('GET', '/api/reports/export/repairs');
+    assert.equal(csv.status, 200);
+    assert.match(csv.headers.get('content-type') || '', /text\/csv/);
+    assert.ok(String(csv.body).includes(`維修測試${unique}`));
+    assert.equal((await request('DELETE', `/api/reports/repairs/${repair.body.id}`)).status, 200);
+  });
+});
+
+// ========== 設定 ==========
 describe('Settings API', () => {
   it('設定值', async () => {
-    const res = await request('PUT', '/api/settings/test_key', { value: 'test_value' }, adminToken);
-    assert.equal(res.status, 200);
+    assert.equal((await request('PUT', '/api/settings/test_key', { value: 'test_value' })).status, 200);
+    assert.equal((await request('GET', '/api/settings/test_key')).body.value, 'test_value');
+    assert.equal((await request('GET', '/api/settings/nonexistent')).body.value, '');
   });
 
-  it('取得設定', async () => {
-    const res = await request('GET', '/api/settings/test_key', null, adminToken);
-    assert.equal(res.status, 200);
-    assert.equal(res.body.value, 'test_value');
-  });
-
-  it('取得不存在的設定', async () => {
-    const res = await request('GET', '/api/settings/nonexistent', null, adminToken);
-    assert.equal(res.status, 200);
-    assert.equal(res.body.value, '');
+  it('成本方法', async () => {
+    assert.equal((await request('GET', '/api/inventory/cost-method')).body.method, 'fifo');
   });
 });

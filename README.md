@@ -4,57 +4,52 @@
 
 ## 系統架構
 
+整個系統是一個 Cloudflare Worker（免費方案），放在 Cloudflare Access 後面：
+
 ```mermaid
 graph LR
-    Browser["🌐 Browser"]
-
-    subgraph K8s["K8s Cluster"]
-        direction LR
-
-        subgraph Nginx["Nginx (反向代理)\n:80 → :30080"]
-            N1["Gzip 壓縮"]
-            N2["靜態檔快取"]
-            N3["API 限流"]
-            N4["安全 Headers"]
-        end
-
-        subgraph App["Node.js App\nExpress + TS\n:3000 (ClusterIP)"]
-            A1["REST API"]
-            A2["認證/權限"]
-            A3["成本計算"]
-            A4["圖片上傳"]
-        end
-
-        subgraph PG["PostgreSQL 16\n:5432"]
-            P1["14 張資料表"]
-            P2["PVC 持久化"]
-        end
-
-        PVC[("PVC: uploads\n(圖片儲存)")]
-
-        Nginx -->|proxy| App
-        App -->|query| PG
-        App --- PVC
+    Browser["🌐 瀏覽器"]
+    Access["Cloudflare Access<br/>只放行指定的 email"]
+    subgraph Worker["Cloudflare Worker（nszpc-dpom）"]
+        Assets["前端靜態檔案<br/>frontend/out（Next.js）"]
+        API["/api/*<br/>src/worker.ts"]
     end
+    D1[("D1<br/>20 張資料表")]
+    R2[("R2<br/>報價單圖片")]
 
-    Browser -->|HTTP| Nginx
+    Browser --> Access --> Worker
+    API --> D1
+    API --> R2
 ```
+
+- 網址：<https://dpom.bluz.dev>（先給客戶 demo，之後可以換成客戶自己的網域）
+- **登入**：Cloudflare Access 先要求登入（email 收驗證碼或 Google），Worker 再自己驗一次 Access 的 JWT
+  （`src/lib/access.ts`：RS256 簽章、iss、aud、效期），用 email 對到 `users` 資料表，角色、頁面權限照舊。網站不存密碼
+- 第一次登入：`wrangler.jsonc` 的 `BOOTSTRAP_ADMIN_EMAILS` 裡的人自動建成管理員；其他人由管理員在「權限管理」新增 email，
+  **而且要把同一個 email 加進 Access 應用的允許清單**，兩邊都有才進得來
 
 ## 技術架構
 
 | 層級 | 技術 |
 |------|------|
 | 語言 | TypeScript |
-| 後端 | Node.js + Express |
-| 資料庫 | PostgreSQL 16 |
-| 前端 | HTML/CSS/JS + Bootstrap 5 |
+| 後端 | Cloudflare Workers（`src/lib/router.ts` 是很小的 Express 相容層，routes 沿用原本的寫法） |
+| 資料庫 | Cloudflare D1（SQLite），`migrations/` |
+| 圖片 | Cloudflare R2 |
+| 登入 | Cloudflare Access |
+| 前端 | Next.js（靜態輸出）+ Bootstrap 5 |
 | 圖表 | Chart.js |
-| OCR | Tesseract.js (前端) |
-| 套件管理 | pnpm |
-| 容器化 | Docker |
-| 編排 | Kubernetes (microk8s) |
-| 反向代理 | Nginx |
-| CI/CD | GitHub Actions |
+| OCR | Tesseract.js（前端，從 cdn.jsdelivr.net 載入） |
+
+### D1 的限制（改程式時要注意）
+
+- **免費方案每個請求最多 50 個查詢**（batch 裡每一句都算），一句 SQL 最多 100 個參數
+  - 多筆寫入用 `json_each(?)` 一句寫完（例如報價單明細、盤商報價、叫貨明細），不要一筆一個查詢
+  - 分類一次讀全部、在記憶體算路徑和子分類（`loadCategories`、`categoryPath`、`descendantIds`）
+  - 扣庫存、還原庫存先把要動的資料一次讀出來，在 JS 算好，再用一個 batch（同一個交易）寫回去
+- SQL 用 pg 的寫法也可以：`pool.query` 會把 `$1` 換成 `?1`、`NOW()` 換成 ISO 時間。PostgreSQL 專用的語法
+  （`to_char`、`::date`、`ILIKE`）要改：年月用 `taipeiMonthSql()`，ISO 週用 `isoWeekRange()`
+- 時間欄位存 UTC 的 ISO 字串；「今天」「這個月」用台灣時間（`taipeiDate()`）
 
 ## ER Model
 
@@ -358,93 +353,73 @@ erDiagram
 ### 前置需求
 
 - Node.js 22+
-- pnpm
-- PostgreSQL 16+（或使用 Docker/K8s 部署）
+- Cloudflare 帳號（`npx wrangler login`）
 
 ### 本地開發
 
 ```bash
-# 安裝依賴
-pnpm install
+npm install
+npm --prefix frontend install
+cp .dev.vars.example .dev.vars   # 本機不經過 Access，直接用 DEV_USER_EMAIL 登入（只在 localhost 有效）
 
-# 啟動 PostgreSQL（需要先建立資料庫）
-# createdb -U postgres nszpc
-
-# 設定環境變數
-export DB_HOST=localhost DB_PORT=5432 DB_NAME=nszpc DB_USER=nszpc DB_PASSWORD=nszpc
-
-# 開發模式（nodemon 自動重啟）
-pnpm dev
-
-# 正式啟動
-pnpm start
+npm run dev        # API + 本機 D1/R2：http://localhost:8787（前端用 frontend/out，要先 npm run build）
+npm run dev:web    # 前端開發模式：http://localhost:3000（/api 轉到 8787）
+npm test           # API 整合測試（要先開著 npm run dev）
 ```
 
-### Docker Compose 部署
+### 部署
 
 ```bash
-docker compose up -d --build
+npm run deploy     # 型別檢查 → 前端 build → 套用 D1 migration → 部署 Worker
 ```
 
-### K8s 部署 (microk8s)
+第一次部署之前，D1（`nszpc-dpom`）和 R2（`nszpc-dpom-uploads`）已經建好，id 在 `wrangler.jsonc`。
 
-```bash
-chmod +x deploy/setup-k8s.sh
-./deploy/setup-k8s.sh
-```
+### Cloudflare Access（登入）
 
-### 預設帳號
+Cloudflare 後台 › Zero Trust › Access › Applications：
 
-| 帳號 | 密碼 | 角色 |
-|------|------|------|
-| admin | admin | 管理員（全部權限） |
+1. Add an application › **Self-hosted**，名稱 `nszpc-dpom`
+2. Public hostname：`dpom.bluz.dev`，**path 留空**（整個網站都要登入）
+3. Policy：Allow，Include › Emails 填所有要用系統的人的 email
+4. 打開 `https://dpom.bluz.dev/api/version` 以外的網址會被轉去登入頁，網址裡 `kid=` 後面那串就是 AUD；
+   填進 `wrangler.jsonc` 的 `ACCESS_AUD`，再 `npm run deploy`
+
+### 備份與還原
+
+- `npm run db:backup`：匯出成 `backup.sql`
+- D1 會自動保留 30 天內任一時間點：`npx wrangler d1 time-travel restore nszpc-dpom --timestamp=<時間>`
 
 ## 專案結構
 
 ```
 ├── src/
-│   ├── server.ts              # 伺服器入口
+│   ├── worker.ts              # Worker 入口（掛 routes、登入檢查、安全標頭）
+│   ├── lib/
+│   │   ├── router.ts          # Express 相容層
+│   │   └── access.ts          # Cloudflare Access JWT 驗證
 │   ├── types/                 # TypeScript 型別定義
 │   ├── models/
-│   │   └── database.ts        # PostgreSQL Schema + 成本計算工具
+│   │   └── database.ts        # D1 存取 + 成本計算 + 扣庫存
 │   └── routes/
-│       ├── auth.ts            # 認證與使用者管理
+│       ├── auth.ts            # 登入檢查與使用者管理
 │       ├── inventory.ts       # 庫存 + 分類 + 進出貨
-│       ├── quotations.ts      # 訂單管理 + 圖片上傳
+│       ├── quotations.ts      # 訂單管理 + 圖片（R2）
 │       ├── customers.ts       # 客戶管理
 │       ├── suppliers.ts       # 盤商報價 + OCR 解析
 │       ├── purchases.ts       # 叫貨訂單 + 結款管理
 │       ├── reports.ts         # 報表 + 保固 + 維修 + 匯出
 │       └── settings.ts        # 設定 + IG 爬蟲
-├── public/                    # 前端靜態檔案
-│   ├── index.html
-│   ├── css/style.css
-│   └── js/
-│       ├── api.js             # API 工具與認證
-│       ├── app.js             # 主應用邏輯
-│       └── pages/             # 各頁面模組
-├── deploy/
-│   ├── setup-k8s.sh           # 一鍵 K8s 部署腳本
-│   ├── k8s/                   # K8s manifests
-│   │   ├── namespace.yaml
-│   │   ├── secret.yaml
-│   │   ├── pv.yaml
-│   │   ├── postgres.yaml
-│   │   ├── deployment.yaml
-│   │   ├── service.yaml
-│   │   ├── nginx-config.yaml
-│   │   └── nginx.yaml
-│   └── *.env                  # 環境設定檔
-├── Dockerfile
-├── docker-compose.yml
-├── tsconfig.json
+├── migrations/                # D1 資料表（0001）和預設資料（0002）
+├── frontend/                  # Next.js 前端（npm run build 輸出到 frontend/out）
+├── public/                    # 舊版的原生 JS 前端（已經不用，Worker 不會提供）
+├── tests/api.test.ts          # API 整合測試
+├── wrangler.jsonc
 └── package.json
 ```
 
 ## 注意事項
 
-- 本系統設計為**內網使用**，不建議直接暴露到公網
-- 認證使用 SHA-256 + 記憶體 Session，重啟伺服器後需重新登入
-- PostgreSQL 資料透過 PersistentVolume 持久化
-- 上傳的圖片儲存在 PVC `/app/data/uploads/`
-- 資料庫備份請使用 `pg_dump`
+- 整個網站在 Cloudflare Access 後面，沒登入連頁面都看不到；`workers.dev` 和預覽網址已關閉
+- LINE Notify 服務在 2025-03-31 已經結束，「LINE 通知」會一直失敗；之後可以改用 LINE Messaging API
+- Instagram 追蹤數是抓 IG 的網頁，IG 常常擋，抓不到就用手動輸入

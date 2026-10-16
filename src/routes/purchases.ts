@@ -1,7 +1,7 @@
-import { Router, Request, Response } from 'express';
-import pool, { stockIn } from '../models/database';
+import { Router, type Request, type Response } from '../lib/router';
+import pool, { isoWeekRange, stockInMany, taipeiDate } from '../models/database';
 
-const router = Router();
+const router = new Router();
 
 // ========== 盤商管理 ==========
 
@@ -47,10 +47,13 @@ router.get('/orders', async (req: Request, res: Response) => {
   if (supplier_id) { conds.push(`po.supplier_id=$${idx++}`); params.push(supplier_id); }
   if (status) { conds.push(`po.status=$${idx++}`); params.push(status); }
   if (week) {
-    conds.push(`to_char(po.order_date, 'IYYY-IW') = to_char($${idx++}::date, 'IYYY-IW')`);
-    params.push(week);
+    // 同一個 ISO 週（週一到週日）
+    const range = isoWeekRange(String(week));
+    conds.push(`po.order_date BETWEEN $${idx} AND $${idx + 1}`);
+    params.push(range.start, range.end);
+    idx += 2;
   }
-  if (month) { conds.push(`to_char(po.order_date, 'YYYY-MM') = $${idx++}`); params.push(month); }
+  if (month) { conds.push(`substr(po.order_date, 1, 7) = $${idx++}`); params.push(month); }
   if (conds.length) sql += ' WHERE ' + conds.join(' AND ');
   sql += ' ORDER BY po.order_date DESC, po.id DESC';
   const { rows } = await pool.query(sql, params);
@@ -86,10 +89,14 @@ router.post('/orders', async (req: Request, res: Response) => {
   );
   const orderId = rows[0].id;
   if (items?.length) {
-    for (const i of items) {
-      await pool.query('INSERT INTO purchase_order_items (purchase_order_id, product_name, brand, spec, quantity, unit_price) VALUES ($1,$2,$3,$4,$5,$6)',
-        [orderId, i.product_name, i.brand || '', i.spec || '', i.quantity || 1, i.unit_price || 0]);
-    }
+    const rows = items.map((i: any) => ({ product_name: i.product_name, brand: i.brand || '', spec: i.spec || '', quantity: i.quantity || 1, unit_price: i.unit_price || 0 }));
+    await pool.query(
+      `INSERT INTO purchase_order_items (purchase_order_id, product_name, brand, spec, quantity, unit_price)
+       SELECT $1, json_extract(value, '$.product_name'), json_extract(value, '$.brand'), json_extract(value, '$.spec'),
+              json_extract(value, '$.quantity'), json_extract(value, '$.unit_price')
+       FROM json_each($2)`,
+      [orderId, JSON.stringify(rows)]
+    );
   }
   res.json({ id: orderId });
 });
@@ -109,11 +116,11 @@ router.post('/orders/:id/receive', async (req: Request, res: Response) => {
   if (!order) return res.status(404).json({ error: '找不到訂單' });
 
   if (stock_items?.length) {
-    for (const item of stock_items) {
-      if (item.inventory_id && item.quantity > 0) {
-        await stockIn(item.inventory_id, item.quantity, item.unit_cost || 0, order.supplier_name, `叫貨單 #${order.id}`);
-      }
-    }
+    // 一次進貨全部（不管幾項都是固定幾個查詢）
+    const entries = stock_items
+      .filter((item: any) => item.inventory_id && item.quantity > 0)
+      .map((item: any) => ({ inventory_id: item.inventory_id, quantity: item.quantity, unit_cost: item.unit_cost || 0 }));
+    await stockInMany(entries, order.supplier_name, `叫貨單 #${order.id}`);
   }
 
   await pool.query("UPDATE purchase_orders SET status='received' WHERE id=$1", [req.params.id]);
@@ -121,26 +128,29 @@ router.post('/orders/:id/receive', async (req: Request, res: Response) => {
 });
 
 router.delete('/orders/:id', async (req: Request, res: Response) => {
-  await pool.query('DELETE FROM purchase_order_items WHERE purchase_order_id=$1', [req.params.id]);
-  await pool.query('DELETE FROM purchase_orders WHERE id=$1', [req.params.id]);
+  await pool.batch([
+    ['DELETE FROM purchase_order_items WHERE purchase_order_id=$1', [req.params.id]],
+    ['DELETE FROM purchase_orders WHERE id=$1', [req.params.id]],
+  ]);
   res.json({ success: true });
 });
 
 // ========== 統計 ==========
 
 router.get('/stats', async (req: Request, res: Response) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = taipeiDate();
   const monthPrefix = today.slice(0, 7);
+  const week = isoWeekRange(today);
 
   const { rows: [weekTotal] } = await pool.query(
-    "SELECT COALESCE(SUM(total_amount),0) as total FROM purchase_orders WHERE to_char(order_date, 'IYYY-IW')=to_char($1::date, 'IYYY-IW')", [today]);
+    'SELECT COALESCE(SUM(total_amount),0) as total FROM purchase_orders WHERE order_date BETWEEN $1 AND $2', [week.start, week.end]);
 
   const { rows: [monthTotal] } = await pool.query(
-    "SELECT COALESCE(SUM(total_amount),0) as total FROM purchase_orders WHERE to_char(order_date, 'YYYY-MM')=$1", [monthPrefix]);
+    'SELECT COALESCE(SUM(total_amount),0) as total FROM purchase_orders WHERE substr(order_date, 1, 7)=$1', [monthPrefix]);
 
   const { rows: bySupplier } = await pool.query(`
     SELECT supplier_name, COUNT(*) as order_count, SUM(total_amount) as total
-    FROM purchase_orders WHERE to_char(order_date, 'YYYY-MM')=$1 GROUP BY supplier_name ORDER BY total DESC
+    FROM purchase_orders WHERE substr(order_date, 1, 7)=$1 GROUP BY supplier_name ORDER BY total DESC
   `, [monthPrefix]);
 
   const { rows: [unpaid] } = await pool.query(

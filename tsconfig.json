@@ -1,18 +1,16 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "commonjs",
-    "lib": ["ES2022"],
-    "outDir": "./dist",
-    "rootDir": "./src",
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    /* Cloudflare Workers 的型別：npm run cf-typegen 產生 */
+    "types": ["./worker-configuration.d.ts"],
     "strict": true,
-    "esModuleInterop": true,
     "skipLibCheck": true,
+    "noEmit": true,
     "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "declaration": false,
-    "sourceMap": true,
+    "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "public", "tests"]
+  "include": ["src/**/*.ts"]
 }

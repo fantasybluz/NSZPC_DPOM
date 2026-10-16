@@ -1,31 +1,42 @@
-import { Router, Request, Response } from 'express';
-import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-import pool, { deductQuotationStock, restoreQuotationStock, isDeductingStatus } from '../models/database';
+import { Router, Response, type Request } from '../lib/router';
+import pool, {
+  deductQuotationStock,
+  insertQuotationItems,
+  isDeductingStatus,
+  restoreQuotationStock,
+  taipeiDate,
+  taipeiMonthSql,
+} from '../models/database';
 import type { Quotation, QuotationItem, QuotationImage } from '../types';
 
-const router = Router();
+const router = new Router();
 
-// 圖片上傳設定
-const uploadDir = path.join(__dirname, '..', '..', 'data', 'uploads');
-fs.mkdirSync(uploadDir, { recursive: true });
+// 圖片存在 R2（env.UPLOADS），key 是 uploads/<filename>；資料庫 quotation_images.filename 只存 filename
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGES = 10;
+const FILENAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+const uploadKey = (filename: string): string => `uploads/${filename}`;
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
-  },
-});
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
+/** 讀一張上傳的圖片（routes 和 worker.ts 的 /api/uploads 共用） */
+export async function serveUpload(env: Env, filename: string): Promise<globalThis.Response> {
+  if (!FILENAME_PATTERN.test(filename)) {
+    return new Response().status(404).json({ error: '圖片不存在' }).toResponse();
+  }
+  const object = await env.UPLOADS.get(uploadKey(filename));
+  if (!object) {
+    return new Response().status(404).json({ error: '圖片不存在' }).toResponse();
+  }
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('Cache-Control', 'private, max-age=86400');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  // 只當圖片顯示，不要被瀏覽器當網頁執行
+  headers.set('Content-Security-Policy', "default-src 'none'; sandbox");
+  return new globalThis.Response(object.body, { headers });
+}
 
 async function generateQuotationNo(): Promise<string> {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  const prefix = `Q${y}${m}${d}`;
+  const prefix = `Q${taipeiDate().replace(/-/g, '')}`;
   const { rows } = await pool.query("SELECT quotation_no FROM quotations WHERE quotation_no LIKE $1 ORDER BY id DESC LIMIT 1", [`${prefix}%`]);
   let seq = 1;
   if (rows.length > 0) seq = parseInt(rows[0].quotation_no.slice(-3)) + 1;
@@ -44,28 +55,27 @@ router.get('/stats/summary', async (_req: Request, res: Response) => {
 
 // 當月訂單統計
 router.get('/stats/monthly', async (_req: Request, res: Response) => {
-  const now = new Date();
-  const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const monthPrefix = taipeiDate().slice(0, 7);
 
   const { rows: byStatus } = await pool.query(`
     SELECT status, delivery_status, COUNT(*) as count, SUM(total_price) as revenue,
            SUM(total_price - total_cost) as profit, SUM(deposit) as deposits
-    FROM quotations WHERE to_char(created_at, 'YYYY-MM') = $1 GROUP BY status, delivery_status
+    FROM quotations WHERE ${taipeiMonthSql('created_at')} = $1 GROUP BY status, delivery_status
   `, [monthPrefix]);
 
   const { rows: byDelivery } = await pool.query(`
     SELECT delivery_status, COUNT(*) as count
-    FROM quotations WHERE to_char(created_at, 'YYYY-MM') = $1 AND delivery_status != '' GROUP BY delivery_status
+    FROM quotations WHERE ${taipeiMonthSql('created_at')} = $1 AND delivery_status != '' GROUP BY delivery_status
   `, [monthPrefix]);
 
   const { rows: recent } = await pool.query(`
     SELECT id, quotation_no, customer_name, status, delivery_status, total_price, deposit, created_at
-    FROM quotations WHERE to_char(created_at, 'YYYY-MM') = $1 ORDER BY created_at DESC LIMIT 10
+    FROM quotations WHERE ${taipeiMonthSql('created_at')} = $1 ORDER BY created_at DESC LIMIT 10
   `, [monthPrefix]);
 
   const { rows: [total] } = await pool.query(`
     SELECT COUNT(*) as count, SUM(total_price) as revenue, SUM(total_price - total_cost) as profit
-    FROM quotations WHERE to_char(created_at, 'YYYY-MM') = $1
+    FROM quotations WHERE ${taipeiMonthSql('created_at')} = $1
   `, [monthPrefix]);
 
   res.json({ month: monthPrefix, byStatus, byDelivery, recent, total });
@@ -124,12 +134,7 @@ router.post('/', async (req: Request, res: Response) => {
     item_title || '', demand_area || '', ship_date || '', delivery_status || '', JSON.stringify(qc_data || {})]);
 
   const qId = rows[0].id;
-  if (items?.length) {
-    for (const item of items) {
-      await pool.query('INSERT INTO quotation_items (quotation_id, category, name, spec, cost, price, quantity, inventory_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-        [qId, item.category || '', item.name, item.spec || '', item.cost || 0, item.price || 0, item.quantity || 1, item.inventory_id || null]);
-    }
-  }
+  await insertQuotationItems(qId, items);
 
   // 若初始狀態就是「成立」，立即扣帳
   if (isDeductingStatus(initStatus)) {
@@ -173,12 +178,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 
   // 2) 替換 items
   await pool.query('DELETE FROM quotation_items WHERE quotation_id = $1', [qId]);
-  if (items?.length) {
-    for (const item of items) {
-      await pool.query('INSERT INTO quotation_items (quotation_id, category, name, spec, cost, price, quantity, inventory_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-        [qId, item.category || '', item.name, item.spec || '', item.cost || 0, item.price || 0, item.quantity || 1, item.inventory_id || null]);
-    }
-  }
+  await insertQuotationItems(qId, items);
 
   // 3) 更新主表
   await pool.query(`
@@ -214,32 +214,46 @@ router.post('/:id/copy', async (req: Request, res: Response) => {
     [newNo, orig.customer_id, orig.customer_name, 'draft', 0, orig.service_fee, orig.total_cost, orig.total_price, orig.note, orig.item_title, orig.demand_area, '', '', orig.qc_data]
   );
   const newId = newRows[0].id;
-  for (const item of origItems) {
-    await pool.query('INSERT INTO quotation_items (quotation_id, category, name, spec, cost, price, quantity, inventory_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [newId, item.category, item.name, item.spec, item.cost, item.price, item.quantity, item.inventory_id || null]);
-  }
+  await insertQuotationItems(newId, origItems);
   res.json({ id: newId, quotation_no: newNo });
 });
 
-// 圖片上傳
-router.post('/:id/images', upload.array('images', 10), async (req: Request, res: Response) => {
-  const qId = req.params.id;
+// 圖片上傳（multipart，欄位 images，最多 10 張、每張 10MB）
+router.post('/:id/images', async (req: Request, res: Response) => {
+  const qId = parseInt(req.params.id as string);
+  const { rows: found } = await pool.query('SELECT id FROM quotations WHERE id = $1', [qId]);
+  if (!found.length) return res.status(404).json({ error: '找不到估價單' });
+
+  let form: FormData;
+  try {
+    form = await req.raw.formData();
+  } catch {
+    return res.status(400).json({ error: '上傳格式不對' });
+  }
+  const files = form.getAll('images').filter((f): f is File => typeof f !== 'string');
+  if (files.length > MAX_IMAGES) return res.status(400).json({ error: `一次最多 ${MAX_IMAGES} 張` });
+  if (files.some((f) => f.size > MAX_IMAGE_BYTES)) return res.status(400).json({ error: '每張圖片最大 10MB' });
+  if (files.some((f) => !f.type.startsWith('image/'))) return res.status(400).json({ error: '只能上傳圖片' });
+
   const results: any[] = [];
-  for (const file of (req.files as Express.Multer.File[])) {
-    const { rows } = await pool.query('INSERT INTO quotation_images (quotation_id, filename, original_name) VALUES ($1, $2, $3) RETURNING id', [qId, file.filename, file.originalname]);
-    results.push({ id: rows[0].id, filename: file.filename, original_name: file.originalname });
+  for (const file of files) {
+    const ext = (file.name.match(/\.[A-Za-z0-9]{1,8}$/)?.[0] ?? '').toLowerCase();
+    const filename = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}${ext}`;
+    await req.env.UPLOADS.put(uploadKey(filename), file.stream(), { httpMetadata: { contentType: file.type } });
+    const { rows } = await pool.query('INSERT INTO quotation_images (quotation_id, filename, original_name) VALUES ($1, $2, $3) RETURNING id', [qId, filename, file.name]);
+    results.push({ id: rows[0].id, filename, original_name: file.name });
   }
   res.json(results);
 });
 
 // 取得圖片
-router.get('/:id/images/:filename', (req: Request, res: Response) => {
-  const filePath = path.join(uploadDir, req.params.filename as string);
-  if (fs.existsSync(filePath)) {
-    res.sendFile(filePath);
-  } else {
-    res.status(404).json({ error: '圖片不存在' });
-  }
+router.get('/:id/images/:filename', async (req: Request, res: Response) => {
+  const { rows } = await pool.query('SELECT id FROM quotation_images WHERE quotation_id = $1 AND filename = $2', [req.params.id, req.params.filename]);
+  if (!rows.length) return res.status(404).json({ error: '圖片不存在' });
+  const object = await serveUpload(req.env, req.params.filename as string);
+  res.status(object.status);
+  object.headers.forEach((value, key) => res.setHeader(key, value));
+  res.send(object.body as ReadableStream);
 });
 
 // 刪除圖片
@@ -247,8 +261,7 @@ router.delete('/:id/images/:imageId', async (req: Request, res: Response) => {
   const { rows } = await pool.query('SELECT * FROM quotation_images WHERE id = $1 AND quotation_id = $2', [req.params.imageId, req.params.id]);
   const img = rows[0] as QuotationImage | undefined;
   if (img) {
-    const filePath = path.join(uploadDir, img.filename);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    await req.env.UPLOADS.delete(uploadKey(img.filename));
     await pool.query('DELETE FROM quotation_images WHERE id = $1', [img.id]);
   }
   res.json({ success: true });
@@ -264,13 +277,12 @@ router.delete('/:id', async (req: Request, res: Response) => {
   }
 
   const { rows: images } = await pool.query('SELECT filename FROM quotation_images WHERE quotation_id = $1', [qId]);
-  for (const img of images) {
-    const filePath = path.join(uploadDir, img.filename);
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  }
-  await pool.query('DELETE FROM quotation_images WHERE quotation_id = $1', [qId]);
-  await pool.query('DELETE FROM quotation_items WHERE quotation_id = $1', [qId]);
-  await pool.query('DELETE FROM quotations WHERE id = $1', [qId]);
+  if (images.length) await req.env.UPLOADS.delete(images.map((img: any) => uploadKey(img.filename)));
+  await pool.batch([
+    ['DELETE FROM quotation_images WHERE quotation_id = $1', [qId]],
+    ['DELETE FROM quotation_items WHERE quotation_id = $1', [qId]],
+    ['DELETE FROM quotations WHERE id = $1', [qId]],
+  ]);
   res.json({ success: true });
 });
 

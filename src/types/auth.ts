@@ -1,11 +1,13 @@
 export type UserRole = 'admin' | 'user';
 
-export type PagePermission = 'dashboard' | 'inventory' | 'quotations' | 'suppliers' | 'customers' | 'youtube' | 'users';
+export type PagePermission = 'dashboard' | 'inventory' | 'quotations' | 'suppliers' | 'customers' | 'youtube' | 'users' | 'categories';
 
+/** 登入改用 Cloudflare Access：一個 email 一個使用者，不存密碼 */
 export interface User {
   id: number;
+  email: string;
+  /** 跟 email 一樣（前端顯示用） */
   username: string;
-  password: string;
   display_name: string;
   role: UserRole;
   permissions: string; // JSON string of PagePermission[]
@@ -16,6 +18,7 @@ export interface User {
 
 export interface UserPublic {
   id: number;
+  email: string;
   username: string;
   display_name: string;
   role: UserRole;
@@ -26,31 +29,15 @@ export interface UserPublic {
 
 export interface SessionData {
   userId: number;
+  email: string;
   username: string;
   displayName: string;
   role: UserRole;
   permissions: PagePermission[];
 }
 
-export interface LoginInput {
-  username: string;
-  password: string;
-}
-
-export interface LoginResponse {
-  token: string;
-  user: {
-    id: number;
-    username: string;
-    display_name: string;
-    role: UserRole;
-    permissions: PagePermission[];
-  };
-}
-
 export interface CreateUserInput {
-  username: string;
-  password: string;
+  email: string;
   display_name?: string;
   role?: UserRole;
   permissions?: PagePermission[];
@@ -61,5 +48,4 @@ export interface UpdateUserInput {
   role?: UserRole;
   permissions?: PagePermission[];
   is_active?: number;
-  password?: string;
 }

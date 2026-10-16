@@ -1,11 +1,12 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { api, getToken, setToken, clearAuth, getStoredUser, setStoredUser } from '@/lib/api';
+import { api, ApiError, clearAuth, setStoredUser, LOGOUT_URL } from '@/lib/api';
 import type { PagePermission } from '@/lib/constants';
 
 interface User {
   id: number;
+  email: string;
   username: string;
   display_name: string;
   role: 'admin' | 'user';
@@ -14,9 +15,9 @@ interface User {
 
 interface AuthContextType {
   user: User | null;
-  token: string | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  /** 沒有登入成功的原因（例如 email 還沒開通） */
+  error: string;
   logout: () => void;
   hasPermission: (page: PagePermission) => boolean;
   isAdmin: boolean;
@@ -24,57 +25,36 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+// 登入交給 Cloudflare Access，這裡只問後端「我是誰」（email 對到的使用者、角色、權限）
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [token, setTokenState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    const stored = getToken();
-    if (stored) {
-      setTokenState(stored);
-      api.get('/auth/me')
-        .then(data => {
-          const u: User = {
-            id: data.userId,
-            username: data.username,
-            display_name: data.displayName,
-            role: data.role,
-            permissions: data.permissions,
-          };
-          setUser(u);
-          setStoredUser(u);
-        })
-        .catch(() => {
-          clearAuth();
-          setTokenState(null);
-        })
-        .finally(() => setLoading(false));
-    } else {
-      setLoading(false);
-    }
-  }, []);
-
-  const login = useCallback(async (username: string, password: string) => {
-    const res = await api.post('/auth/login', { username, password });
-    setToken(res.token);
-    setTokenState(res.token);
-    const u: User = {
-      id: res.user.id,
-      username: res.user.username,
-      display_name: res.user.display_name,
-      role: res.user.role,
-      permissions: res.user.permissions,
-    };
-    setUser(u);
-    setStoredUser(u);
+    api.get('/auth/me')
+      .then(data => {
+        const u: User = {
+          id: data.userId,
+          email: data.email,
+          username: data.username,
+          display_name: data.displayName,
+          role: data.role,
+          permissions: data.permissions,
+        };
+        setUser(u);
+        setStoredUser(u);
+      })
+      .catch((err: unknown) => {
+        clearAuth();
+        setError(err instanceof ApiError || err instanceof Error ? err.message : '無法取得登入資訊');
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   const logout = useCallback(() => {
-    api.post('/auth/logout').catch(() => {});
     clearAuth();
-    setUser(null);
-    setTokenState(null);
+    window.location.assign(LOGOUT_URL);
   }, []);
 
   const isAdmin = user?.role === 'admin';
@@ -86,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, logout, hasPermission, isAdmin }}>
+    <AuthContext.Provider value={{ user, loading, error, logout, hasPermission, isAdmin }}>
       {children}
     </AuthContext.Provider>
   );

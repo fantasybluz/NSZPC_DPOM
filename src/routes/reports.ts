@@ -1,9 +1,7 @@
-import { Router, Request, Response } from 'express';
-import pool from '../models/database';
-import path from 'path';
-import fs from 'fs';
+import { Router, type Request, type Response } from '../lib/router';
+import pool, { taipeiDate } from '../models/database';
 
-const router = Router();
+const router = new Router();
 
 // ========== 利潤報表 ==========
 
@@ -11,9 +9,10 @@ router.get('/profit', async (req: Request, res: Response) => {
   const { period } = req.query;
   const isYearly = period === 'yearly';
 
-  const fmt = isYearly ? 'YYYY' : 'YYYY-MM';
+  // 台灣時間的年或年月
+  const fmt = isYearly ? '%Y' : '%Y-%m';
   const { rows: data } = await pool.query(`
-    SELECT to_char(created_at, $1) as period,
+    SELECT strftime($1, created_at, '+8 hours') as period,
       COUNT(*) as order_count,
       SUM(total_price) as revenue,
       SUM(total_cost) as cost,
@@ -107,8 +106,7 @@ router.get('/warranties/expiring', async (_req: Request, res: Response) => {
 // ========== 維修工單 ==========
 
 async function generateRepairNo(): Promise<string> {
-  const now = new Date();
-  const prefix = `R${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`;
+  const prefix = `R${taipeiDate().replace(/-/g, '')}`;
   const { rows } = await pool.query("SELECT repair_no FROM repair_orders WHERE repair_no LIKE $1 ORDER BY id DESC LIMIT 1", [`${prefix}%`]);
   let seq = 1;
   if (rows.length > 0) seq = parseInt(rows[0].repair_no.slice(-3)) + 1;
@@ -173,8 +171,10 @@ router.put('/repairs/:id', async (req: Request, res: Response) => {
 });
 
 router.delete('/repairs/:id', async (req: Request, res: Response) => {
-  await pool.query('DELETE FROM repair_logs WHERE repair_id=$1', [req.params.id]);
-  await pool.query('DELETE FROM repair_orders WHERE id=$1', [req.params.id]);
+  await pool.batch([
+    ['DELETE FROM repair_logs WHERE repair_id=$1', [req.params.id]],
+    ['DELETE FROM repair_orders WHERE id=$1', [req.params.id]],
+  ]);
   res.json({ success: true });
 });
 
@@ -195,7 +195,7 @@ router.get('/notifications', async (_req: Request, res: Response) => {
   res.json({ lowStock, expiringWarranties, unpaidSettlements, activeRepairs });
 });
 
-// Line Notify
+// Line Notify（注意：LINE Notify 服務在 2025-03-31 已經結束，這裡會一直失敗；之後可以改用 LINE Messaging API）
 router.post('/line-notify', async (req: Request, res: Response) => {
   const { rows } = await pool.query("SELECT value FROM settings WHERE key='line_notify_token'");
   if (!rows[0]?.value) return res.status(400).json({ error: '未設定 Line Notify Token' });
@@ -230,13 +230,13 @@ router.get('/export/:type', async (req: Request, res: Response) => {
     case 'customers':
       headers = ['姓名','電話','Email','來源','縣市','區域','建立日期'];
       ({ rows } = await pool.query('SELECT * FROM customers ORDER BY name'));
-      rows = rows.map((r: any) => [r.name, r.phone, r.email, r.source, r.city, r.district, r.created_at?.toISOString?.()?.slice(0,10) || '']);
+      rows = rows.map((r: any) => [r.name, r.phone, r.email, r.source, r.city, r.district, String(r.created_at || '').slice(0, 10)]);
       filename = 'customers';
       break;
     case 'quotations':
       headers = ['訂單號','客戶','狀態','總成本','總售價','服務費','訂金','建立日期'];
       ({ rows } = await pool.query('SELECT * FROM quotations ORDER BY created_at DESC'));
-      rows = rows.map((r: any) => [r.quotation_no, r.customer_name, r.status, r.total_cost, r.total_price, r.service_fee, r.deposit, r.created_at?.toISOString?.()?.slice(0,10) || '']);
+      rows = rows.map((r: any) => [r.quotation_no, r.customer_name, r.status, r.total_cost, r.total_price, r.service_fee, r.deposit, String(r.created_at || '').slice(0, 10)]);
       filename = 'quotations';
       break;
     case 'repairs':
@@ -261,11 +261,11 @@ router.get('/export/:type', async (req: Request, res: Response) => {
 // ========== 資料備份/還原 ==========
 
 router.get('/backup', async (_req: Request, res: Response) => {
-  res.json({ message: 'PostgreSQL 備份請使用 pg_dump 指令' });
+  res.json({ message: '資料在 Cloudflare D1，備份請在電腦上執行 npm run db:backup（見 README）；D1 也會自動保留 30 天內任一時間點可以還原（Time Travel）' });
 });
 
-router.post('/restore', (req: Request, res: Response) => {
-  res.json({ message: 'PostgreSQL 還原請使用 pg_restore 或 psql 指令' });
+router.post('/restore', (_req: Request, res: Response) => {
+  res.json({ message: '還原請用 npx wrangler d1 time-travel restore nszpc-dpom（見 README）' });
 });
 
 export default router;

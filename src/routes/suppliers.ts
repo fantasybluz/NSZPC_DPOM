@@ -1,8 +1,19 @@
-import { Router, Request, Response } from 'express';
-import pool from '../models/database';
+import { Router, type Request, type Response } from '../lib/router';
+import pool, { taipeiDate } from '../models/database';
 import type { ParsedPrice } from '../types';
 
-const router = Router();
+const router = new Router();
+
+// 解析出來的報價一句寫完（一則訊息可能有上百行，一行一個查詢會超過 D1 每個請求 50 個查詢的上限）
+async function insertPrices(supplier: string, quoteDate: string, rows: { product: string; price: number; source: string }[]): Promise<void> {
+  if (!rows.length) return;
+  await pool.query(
+    `INSERT INTO supplier_prices (supplier_name, product_name, price, source_text, quote_date)
+     SELECT $1, json_extract(value, '$.product'), json_extract(value, '$.price'), json_extract(value, '$.source'), $2
+     FROM json_each($3)`,
+    [supplier, quoteDate, JSON.stringify(rows)]
+  );
+}
 
 // 文字解析
 router.post('/parse', async (req: Request, res: Response) => {
@@ -10,11 +21,8 @@ router.post('/parse', async (req: Request, res: Response) => {
   if (!text) return res.status(400).json({ error: '請提供訊息內容' });
 
   const results = parseLinePrices(text);
-  const dt = quote_date || new Date().toISOString().slice(0, 10);
-  for (const r of results) {
-    await pool.query('INSERT INTO supplier_prices (supplier_name, product_name, price, source_text, quote_date) VALUES ($1, $2, $3, $4, $5)',
-      [supplier_name || '', r.product, r.price, text, dt]);
-  }
+  const dt = quote_date || taipeiDate();
+  await insertPrices(supplier_name || '', dt, results.map(r => ({ product: r.product, price: r.price, source: text })));
   res.json({ parsed: results, count: results.length });
 });
 
@@ -24,11 +32,8 @@ router.post('/parse-ocr', async (req: Request, res: Response) => {
   if (!text) return res.status(400).json({ error: '無 OCR 文字' });
 
   const results = parseOcrTable(text);
-  const dt = quote_date || new Date().toISOString().slice(0, 10);
-  for (const r of results) {
-    await pool.query('INSERT INTO supplier_prices (supplier_name, product_name, price, source_text, quote_date) VALUES ($1, $2, $3, $4, $5)',
-      [supplier_name || '', r.product, r.price, r.original, dt]);
-  }
+  const dt = quote_date || taipeiDate();
+  await insertPrices(supplier_name || '', dt, results.map(r => ({ product: r.product, price: r.price, source: r.original })));
   res.json({ parsed: results, count: results.length });
 });
 
@@ -41,7 +46,7 @@ router.get('/prices', async (req: Request, res: Response) => {
   let idx = 1;
   if (search) { conditions.push(`product_name LIKE $${idx++}`); params.push(`%${search}%`); }
   if (supplier) { conditions.push(`supplier_name LIKE $${idx++}`); params.push(`%${supplier}%`); }
-  if (month) { conditions.push(`to_char(quote_date, 'YYYY-MM') = $${idx++}`); params.push(month); }
+  if (month) { conditions.push(`substr(quote_date, 1, 7) = $${idx++}`); params.push(month); }
   if (conditions.length) sql += ' WHERE ' + conditions.join(' AND ');
   sql += ' ORDER BY quote_date DESC, parsed_at DESC LIMIT 500';
   const { rows } = await pool.query(sql, params);

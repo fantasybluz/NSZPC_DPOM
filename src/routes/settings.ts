@@ -1,8 +1,8 @@
-import { Router, Request, Response } from 'express';
+import { Router, type Request, type Response } from '../lib/router';
 import pool from '../models/database';
 import type { Setting } from '../types';
 
-const router = Router();
+const router = new Router();
 
 // IG 爬蟲 — 放在 /:key 前面
 router.get('/instagram/fetch', async (_req: Request, res: Response) => {

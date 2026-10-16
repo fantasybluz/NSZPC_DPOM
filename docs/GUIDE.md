@@ -16,11 +16,10 @@
 
 ## 首次登入
 
-1. 啟動系統後，使用瀏覽器開啟 `http://localhost:3000`
-2. 使用預設帳號登入：
-   - 帳號: `admin`
-   - 密碼: `admin`
-3. **重要**: 登入後請到「權限管理」更改密碼
+1. 用瀏覽器開啟 <https://dpom.bluz.dev>
+2. Cloudflare 會先要求登入：輸入你的 email，收信拿驗證碼（或用 Google 登入）
+3. 第一次登入的管理員會自動建立帳號；其他人要先由管理員在「權限管理」新增他的 email
+4. 系統不用密碼，登出請按左下角「登出」
 
 ---
 
@@ -191,7 +190,8 @@ NVMe 1TB 2090                → 品名: NVMe 1TB, 價格: 2,090
 ### 新增使用者
 
 1. 點擊 **+ 新增使用者**
-2. 設定帳號、密碼、顯示名稱
+2. 填 email（要跟他登入 Cloudflare Access 用的一樣）、顯示名稱
+   - 同一個 email 也要加進 Cloudflare Access 的允許清單，他才進得了網站（見 README）
 3. 選擇角色：
    - **管理員**: 擁有全部權限
    - **使用者**: 依據勾選的頁面權限存取
@@ -212,44 +212,19 @@ NVMe 1TB 2090                → 品名: NVMe 1TB, 價格: 2,090
 
 ---
 
-## 內網部署
+## 部署
 
-### 直接啟動
-
-```bash
-# 安裝
-pnpm install
-
-# 啟動（背景執行）
-nohup node src/server.js > app.log 2>&1 &
-```
-
-### 使用 Docker
-
-```bash
-docker compose up -d --build
-```
-
-### 內網存取
-
-系統啟動時會顯示內網 IP 位址。其他電腦使用該 IP + Port 存取即可：
-
-```
-http://192.168.1.100:3000
-```
+系統跑在 Cloudflare（Workers + D1 + R2），部署方式見 README 的「部署」。
 
 ### 資料備份
 
-```bash
-# 備份資料庫
-cp data/shop.db data/shop.db.backup
+資料在 Cloudflare D1、圖片在 Cloudflare R2：
 
-# 備份上傳的圖片
-cp -r data/uploads/ data/uploads.backup/
+```bash
+npm run db:backup                     # 匯出資料庫成 backup.sql
+npx wrangler d1 time-travel restore nszpc-dpom --timestamp=2026-10-16T10:00:00+08:00   # 還原到 30 天內的某個時間
 ```
 
 ### 建議
 
-- 定期備份 `data/` 資料夾
-- 預設密碼請務必更改
-- 如需多人同時使用，建議使用 Docker 部署確保穩定性
+- 員工離職時：在「權限管理」停用帳號，並從 Cloudflare Access 的允許清單移除 email

@@ -1,0 +1,44 @@
+{
+  // 星辰電腦 NSZPC 管理系統：一個 Cloudflare Worker。前端（frontend/out，Next.js 靜態輸出）當靜態檔案，/api 交給 src/worker.ts
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nszpc-dpom",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "frontend/out",
+    // Next.js 靜態輸出是 dashboard.html 這種檔名，/dashboard 會自動對到
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page",
+    "run_worker_first": ["/api/*"]
+  },
+  // 整個網站都在 Cloudflare Access 後面（內部系統），客戶確認後可以換成自己的網域
+  "routes": [{ "pattern": "dpom.bluz.dev", "custom_domain": true }],
+  // 只留正式網址：workers.dev 和預覽網址前面沒有 Cloudflare Access
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "old-fog-9482.cloudflareaccess.com",
+    // Access 應用的 Application Audience (AUD) Tag；沒設的話 API 一律拒絕
+    "ACCESS_AUD": "",
+    // 第一次登入時自動建成管理員的 email（之後由管理員在「使用者管理」加人）
+    "BOOTSTRAP_ADMIN_EMAILS": "fantasybluz@gmail.com,bluzstudio2020@gmail.com"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nszpc-dpom",
+      "database_id": "9da215ba-329c-4ac9-9f01-945558f28595",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      // 報價單圖片
+      "binding": "UPLOADS",
+      "bucket_name": "nszpc-dpom-uploads"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

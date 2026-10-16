@@ -306,8 +306,8 @@ export default function ReportsPage() {
 
   /* ── export ── */
   const handleExport = (type: string) => {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : '';
-    window.open(`${API_BASE}/reports/export/${type}?token=${token}`, '_blank');
+    // 同網址的 Access cookie 會一起帶上，不用 token
+    window.open(`${API_BASE}/reports/export/${type}`, '_blank');
   };
 
   /* ── chart data ── */

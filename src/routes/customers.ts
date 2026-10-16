@@ -1,8 +1,8 @@
-import { Router, Request, Response } from 'express';
+import { Router, type Request, type Response } from '../lib/router';
 import pool from '../models/database';
 import type { Customer, ServiceRecord } from '../types';
 
-const router = Router();
+const router = new Router();
 
 router.get('/', async (req: Request, res: Response) => {
   const { source, city, search } = req.query;
@@ -62,8 +62,10 @@ router.put('/:id', async (req: Request, res: Response) => {
 });
 
 router.delete('/:id', async (req: Request, res: Response) => {
-  await pool.query('DELETE FROM service_records WHERE customer_id = $1', [req.params.id]);
-  await pool.query('DELETE FROM customers WHERE id = $1', [req.params.id]);
+  await pool.batch([
+    ['DELETE FROM service_records WHERE customer_id = $1', [req.params.id]],
+    ['DELETE FROM customers WHERE id = $1', [req.params.id]],
+  ]);
   res.json({ success: true });
 });
 

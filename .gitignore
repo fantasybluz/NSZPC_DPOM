@@ -5,3 +5,10 @@ data/
 .env
 .env.*
 !deploy/*.env
+
+# Cloudflare（wrangler）
+.wrangler/
+.dev.vars*
+!.dev.vars.example
+backup.sql
+frontend/out/

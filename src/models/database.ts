@@ -1,359 +1,114 @@
-import { Pool } from 'pg';
-import crypto from 'crypto';
+// 資料庫：Cloudflare D1（SQLite），資料表見 migrations/。
+//
+// pool.query(sql, params) 保留原本 pg 的寫法：$1、$2 會換成 SQLite 的 ?1、?2，NOW() 換成 ISO 時間字串，
+// 回傳 { rows, rowCount }。routes 裡大部分 SQL 不用改。
+//
+// D1 免費方案每個請求最多 50 個查詢（batch 裡每一句都算），一句最多 100 個參數。所以：
+//   - 多筆寫入用 json_each(?) 一句寫完，不要一筆一個查詢
+//   - 扣庫存、還原庫存先把要動的資料一次讀出來，在 JS 算好，再用一個 batch（同一個交易）寫回去
 
-const pool = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432'),
-  database: process.env.DB_NAME || 'nszpc',
-  user: process.env.DB_USER || 'nszpc',
-  password: process.env.DB_PASSWORD || 'nszpc',
-});
+let database: D1Database | null = null;
 
-// ========== 初始化資料表 ==========
-
-export async function initDatabase(): Promise<void> {
-  await pool.query(`
-    -- 分類（父子架構）
-    CREATE TABLE IF NOT EXISTS categories (
-      id SERIAL PRIMARY KEY,
-      parent_id INTEGER,
-      name TEXT NOT NULL,
-      icon TEXT DEFAULT '',
-      sort_order INTEGER DEFAULT 0,
-      FOREIGN KEY (parent_id) REFERENCES categories(id) ON DELETE CASCADE,
-      UNIQUE(parent_id, name)
-    );
-
-    -- 庫存商品
-    CREATE TABLE IF NOT EXISTS inventory (
-      id SERIAL PRIMARY KEY,
-      category_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      brand TEXT DEFAULT '',
-      spec TEXT DEFAULT '',
-      price INTEGER DEFAULT 0,
-      quantity INTEGER DEFAULT 0,
-      min_quantity INTEGER DEFAULT 0,
-      avg_cost REAL DEFAULT 0,
-      note TEXT DEFAULT '',
-      created_at TIMESTAMP DEFAULT NOW(),
-      updated_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (category_id) REFERENCES categories(id)
-    );
-
-    -- 進貨批次
-    CREATE TABLE IF NOT EXISTS inventory_batches (
-      id SERIAL PRIMARY KEY,
-      inventory_id INTEGER NOT NULL,
-      unit_cost INTEGER NOT NULL,
-      quantity INTEGER NOT NULL,
-      remaining INTEGER NOT NULL,
-      supplier TEXT DEFAULT '',
-      batch_date DATE DEFAULT CURRENT_DATE,
-      note TEXT DEFAULT '',
-      created_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (inventory_id) REFERENCES inventory(id) ON DELETE CASCADE
-    );
-
-    -- 庫存異動紀錄
-    CREATE TABLE IF NOT EXISTS inventory_logs (
-      id SERIAL PRIMARY KEY,
-      inventory_id INTEGER NOT NULL,
-      type TEXT NOT NULL DEFAULT 'in',
-      change_qty INTEGER NOT NULL,
-      unit_cost INTEGER DEFAULT 0,
-      total_cost INTEGER DEFAULT 0,
-      reason TEXT DEFAULT '',
-      batch_id INTEGER,
-      created_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (inventory_id) REFERENCES inventory(id),
-      FOREIGN KEY (batch_id) REFERENCES inventory_batches(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS customers (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL,
-      phone TEXT DEFAULT '',
-      email TEXT DEFAULT '',
-      source TEXT DEFAULT '',
-      city TEXT DEFAULT '',
-      district TEXT DEFAULT '',
-      address TEXT DEFAULT '',
-      note TEXT DEFAULT '',
-      created_at TIMESTAMP DEFAULT NOW(),
-      updated_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS service_records (
-      id SERIAL PRIMARY KEY,
-      customer_id INTEGER NOT NULL,
-      service_type TEXT DEFAULT '',
-      description TEXT DEFAULT '',
-      service_date DATE DEFAULT CURRENT_DATE,
-      created_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (customer_id) REFERENCES customers(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS quotations (
-      id SERIAL PRIMARY KEY,
-      quotation_no TEXT NOT NULL UNIQUE,
-      customer_id INTEGER,
-      customer_name TEXT DEFAULT '',
-      status TEXT DEFAULT 'draft',
-      deposit INTEGER DEFAULT 0,
-      service_fee INTEGER DEFAULT 0,
-      total_cost INTEGER DEFAULT 0,
-      total_price INTEGER DEFAULT 0,
-      note TEXT DEFAULT '',
-      item_title TEXT DEFAULT '',
-      demand_area TEXT DEFAULT '',
-      ship_date TEXT DEFAULT '',
-      delivery_status TEXT DEFAULT '',
-      qc_data TEXT DEFAULT '{}',
-      stock_deducted INTEGER DEFAULT 0,
-      created_at TIMESTAMP DEFAULT NOW(),
-      updated_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (customer_id) REFERENCES customers(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS quotation_items (
-      id SERIAL PRIMARY KEY,
-      quotation_id INTEGER NOT NULL,
-      category TEXT DEFAULT '',
-      name TEXT NOT NULL,
-      spec TEXT DEFAULT '',
-      cost INTEGER DEFAULT 0,
-      price INTEGER DEFAULT 0,
-      quantity INTEGER DEFAULT 1,
-      inventory_id INTEGER,
-      FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS quotation_stock_deductions (
-      id SERIAL PRIMARY KEY,
-      quotation_id INTEGER NOT NULL,
-      inventory_id INTEGER NOT NULL,
-      batch_id INTEGER NOT NULL,
-      quantity INTEGER NOT NULL,
-      unit_cost INTEGER NOT NULL,
-      created_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE
-    );
-    CREATE INDEX IF NOT EXISTS idx_qsd_quotation ON quotation_stock_deductions(quotation_id);
-
-    CREATE TABLE IF NOT EXISTS quotation_images (
-      id SERIAL PRIMARY KEY,
-      quotation_id INTEGER NOT NULL,
-      filename TEXT NOT NULL,
-      original_name TEXT DEFAULT '',
-      created_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (quotation_id) REFERENCES quotations(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS supplier_prices (
-      id SERIAL PRIMARY KEY,
-      supplier_name TEXT DEFAULT '',
-      product_name TEXT NOT NULL,
-      price INTEGER DEFAULT 0,
-      source_text TEXT DEFAULT '',
-      quote_date DATE DEFAULT CURRENT_DATE,
-      parsed_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS suppliers (
-      id SERIAL PRIMARY KEY,
-      name TEXT NOT NULL UNIQUE,
-      payment_type TEXT DEFAULT 'weekly',
-      default_tax_type TEXT DEFAULT 'tax_included',
-      contact TEXT DEFAULT '',
-      note TEXT DEFAULT '',
-      created_at TIMESTAMP DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS purchase_orders (
-      id SERIAL PRIMARY KEY,
-      supplier_id INTEGER NOT NULL,
-      supplier_name TEXT DEFAULT '',
-      tax_type TEXT DEFAULT 'tax_included',
-      subtotal INTEGER DEFAULT 0,
-      tax_amount INTEGER DEFAULT 0,
-      total_amount INTEGER DEFAULT 0,
-      status TEXT DEFAULT 'pending',
-      order_date DATE DEFAULT CURRENT_DATE,
-      note TEXT DEFAULT '',
-      created_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS purchase_order_items (
-      id SERIAL PRIMARY KEY,
-      purchase_order_id INTEGER NOT NULL,
-      product_name TEXT NOT NULL,
-      brand TEXT DEFAULT '',
-      spec TEXT DEFAULT '',
-      quantity INTEGER DEFAULT 1,
-      unit_price INTEGER DEFAULT 0,
-      FOREIGN KEY (purchase_order_id) REFERENCES purchase_orders(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS settlements (
-      id SERIAL PRIMARY KEY,
-      supplier_id INTEGER NOT NULL,
-      supplier_name TEXT DEFAULT '',
-      tax_type TEXT DEFAULT 'tax_included',
-      subtotal INTEGER DEFAULT 0,
-      tax_amount INTEGER DEFAULT 0,
-      amount INTEGER DEFAULT 0,
-      period_start TEXT DEFAULT '',
-      period_end TEXT DEFAULT '',
-      status TEXT DEFAULT 'unpaid',
-      paid_date TEXT DEFAULT '',
-      note TEXT DEFAULT '',
-      created_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS warranties (
-      id SERIAL PRIMARY KEY,
-      quotation_id INTEGER,
-      customer_id INTEGER,
-      customer_name TEXT DEFAULT '',
-      product_name TEXT NOT NULL,
-      serial_number TEXT DEFAULT '',
-      ship_date TEXT DEFAULT '',
-      warranty_months INTEGER DEFAULT 12,
-      warranty_end TEXT DEFAULT '',
-      status TEXT DEFAULT 'active',
-      note TEXT DEFAULT '',
-      created_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (quotation_id) REFERENCES quotations(id),
-      FOREIGN KEY (customer_id) REFERENCES customers(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS repair_orders (
-      id SERIAL PRIMARY KEY,
-      repair_no TEXT NOT NULL UNIQUE,
-      customer_id INTEGER,
-      customer_name TEXT DEFAULT '',
-      warranty_id INTEGER,
-      quotation_id INTEGER,
-      device_name TEXT DEFAULT '',
-      serial_number TEXT DEFAULT '',
-      issue TEXT DEFAULT '',
-      diagnosis TEXT DEFAULT '',
-      solution TEXT DEFAULT '',
-      status TEXT DEFAULT 'received',
-      priority TEXT DEFAULT 'normal',
-      cost INTEGER DEFAULT 0,
-      received_date DATE DEFAULT CURRENT_DATE,
-      completed_date TEXT DEFAULT '',
-      note TEXT DEFAULT '',
-      created_at TIMESTAMP DEFAULT NOW(),
-      updated_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (customer_id) REFERENCES customers(id),
-      FOREIGN KEY (warranty_id) REFERENCES warranties(id),
-      FOREIGN KEY (quotation_id) REFERENCES quotations(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS repair_logs (
-      id SERIAL PRIMARY KEY,
-      repair_id INTEGER NOT NULL,
-      status TEXT DEFAULT '',
-      description TEXT DEFAULT '',
-      created_at TIMESTAMP DEFAULT NOW(),
-      FOREIGN KEY (repair_id) REFERENCES repair_orders(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT DEFAULT ''
-    );
-
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      username TEXT NOT NULL UNIQUE,
-      password TEXT NOT NULL,
-      display_name TEXT DEFAULT '',
-      role TEXT DEFAULT 'user',
-      permissions TEXT DEFAULT '[]',
-      is_active INTEGER DEFAULT 1,
-      created_at TIMESTAMP DEFAULT NOW(),
-      updated_at TIMESTAMP DEFAULT NOW()
-    );
-  `);
-
-  // ========== 補上既有資料表的新欄位（向後相容） ==========
-  await pool.query(`ALTER TABLE quotation_items ADD COLUMN IF NOT EXISTS inventory_id INTEGER`);
-  await pool.query(`ALTER TABLE quotations ADD COLUMN IF NOT EXISTS stock_deducted INTEGER DEFAULT 0`);
-
-  // ========== 預設分類 ==========
-  interface CatDef { name: string; icon?: string; children?: CatDef[] }
-
-  const defaultCategories: CatDef[] = [
-    { name: 'CPU', icon: 'cpu', children: [
-      { name: 'AMD', children: [{ name: 'AM4' }, { name: 'AM5' }] },
-      { name: 'Intel', children: [{ name: 'LGA1700' }, { name: 'LGA1851' }] },
-    ]},
-    { name: '顯示卡', icon: 'gpu-card', children: [
-      { name: '華碩' }, { name: '技嘉' }, { name: '微星' },
-    ]},
-    { name: '主機板', icon: 'motherboard' },
-    { name: '記憶體', icon: 'memory' },
-    { name: '硬碟', icon: 'device-hdd' },
-    { name: '散熱', icon: 'fan', children: [
-      { name: '水冷', icon: 'droplet-half' }, { name: '風冷', icon: 'fan' },
-    ]},
-    { name: '電源供應器', icon: 'lightning-charge' },
-    { name: '機殼', icon: 'pc-display', children: [
-      { name: 'ATX' }, { name: 'mATX' }, { name: 'ITX' },
-    ]},
-    { name: '周邊', icon: 'mouse2' },
-  ];
-
-  async function seedCategories(nodes: CatDef[], parentId: number | null, parentIcon: string = '') {
-    let sort = 1;
-    for (const node of nodes) {
-      const icon = node.icon || parentIcon;
-      const existing = parentId === null
-        ? await pool.query('SELECT id FROM categories WHERE name = $1 AND parent_id IS NULL', [node.name])
-        : await pool.query('SELECT id FROM categories WHERE name = $1 AND parent_id = $2', [node.name, parentId]);
-
-      let id: number;
-      if (existing.rows.length === 0) {
-        const r = await pool.query(
-          'INSERT INTO categories (parent_id, name, icon, sort_order) VALUES ($1, $2, $3, $4) RETURNING id',
-          [parentId, node.name, icon, sort]
-        );
-        id = r.rows[0].id;
-      } else {
-        id = existing.rows[0].id;
-      }
-      if (node.children) await seedCategories(node.children, id, icon);
-      sort++;
-    }
-  }
-  await seedCategories(defaultCategories, null);
-
-  // 預設成本方法
-  await pool.query(
-    "INSERT INTO settings (key, value) VALUES ('cost_method', 'fifo') ON CONFLICT (key) DO NOTHING"
-  );
-
-  // 預設管理員
-  const adminExists = await pool.query("SELECT id FROM users WHERE username = 'admin'");
-  if (adminExists.rows.length === 0) {
-    await pool.query(
-      'INSERT INTO users (username, password, display_name, role, permissions) VALUES ($1, $2, $3, $4, $5)',
-      ['admin', hashPassword('admin'), '管理員', 'admin',
-        JSON.stringify(['dashboard', 'inventory', 'quotations', 'suppliers', 'customers', 'youtube', 'users', 'categories'])]
-    );
-  }
+/** 每個請求開始時叫一次（Worker 的 env.DB） */
+export function useDatabase(db: D1Database): void {
+  database = db;
 }
 
-// ========== 密碼雜湊 ==========
+const db = (): D1Database => {
+  if (!database) throw new Error('database: useDatabase() was not called');
+  return database;
+};
 
-export function hashPassword(pwd: string): string {
-  return crypto.createHash('sha256').update(pwd).digest('hex');
+/** 跟原本 PostgreSQL 的 TIMESTAMP 轉成 JSON 一樣的格式（UTC ISO 8601） */
+export const NOW_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
+
+const translate = (sql: string): string => sql.replace(/\$(\d+)/g, '?$1').replace(/NOW\(\)/g, NOW_SQL);
+
+const normalizeParam = (value: unknown): unknown => {
+  if (value === undefined) return null;
+  if (typeof value === 'boolean') return value ? 1 : 0;
+  if (value !== null && typeof value === 'object') return JSON.stringify(value);
+  return value;
+};
+
+const prepare = (sql: string, params: unknown[] = []): D1PreparedStatement =>
+  db().prepare(translate(sql)).bind(...params.map(normalizeParam));
+
+export interface QueryResult<T = any> {
+  rows: T[];
+  rowCount: number;
+}
+
+const pool = {
+  async query<T = any>(sql: string, params: unknown[] = []): Promise<QueryResult<T>> {
+    const result = await prepare(sql, params).all<T>();
+    return { rows: result.results, rowCount: result.meta.changes ?? 0 };
+  },
+
+  /** 多句一起送（同一個交易，有一句失敗全部回滾） */
+  async batch(statements: [string, unknown[]?][]): Promise<QueryResult[]> {
+    if (statements.length === 0) return [];
+    const results = await db().batch(statements.map(([sql, params]) => prepare(sql, params ?? [])));
+    return results.map((r) => ({ rows: r.results as any[], rowCount: r.meta.changes ?? 0 }));
+  },
+};
+
+export default pool;
+
+// ========== 時間工具（台灣時間） ==========
+
+/** 台灣時間的 YYYY-MM-DD（Worker 是 UTC） */
+export function taipeiDate(date = new Date()): string {
+  return new Date(date.getTime() + 8 * 3600_000).toISOString().slice(0, 10);
+}
+
+/** 原本 to_char(created_at, 'YYYY-MM')：ISO 時間轉成台灣時間再取年月 */
+export const taipeiMonthSql = (column: string): string => `strftime('%Y-%m', ${column}, '+8 hours')`;
+
+/** ISO 週（週一到週日）的起訖日，取代原本 to_char(x, 'IYYY-IW') */
+export function isoWeekRange(dateStr: string): { start: string; end: string } {
+  const d = new Date(`${dateStr.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) throw new Error(`無效的日期：${dateStr}`);
+  const day = (d.getUTCDay() + 6) % 7; // 週一 = 0
+  const start = new Date(d.getTime() - day * 86_400_000);
+  const end = new Date(start.getTime() + 6 * 86_400_000);
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+}
+
+// ========== 分類工具（一次讀全部，在記憶體算，避免一層一層查） ==========
+
+export interface CategoryRow {
+  id: number;
+  parent_id: number | null;
+  name: string;
+  icon: string;
+  sort_order: number;
+}
+
+export async function loadCategories(): Promise<CategoryRow[]> {
+  const { rows } = await pool.query<CategoryRow>('SELECT * FROM categories ORDER BY sort_order, id');
+  return rows;
+}
+
+export function descendantIds(all: CategoryRow[], catId: number): number[] {
+  const ids = [catId];
+  for (const child of all.filter((c) => c.parent_id === catId)) {
+    ids.push(...descendantIds(all, child.id));
+  }
+  return ids;
+}
+
+export function categoryPath(all: CategoryRow[], catId: number): string {
+  const byId = new Map(all.map((c) => [c.id, c]));
+  const parts: string[] = [];
+  let current = byId.get(catId);
+  const seen = new Set<number>();
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    parts.unshift(current.name);
+    current = current.parent_id === null ? undefined : byId.get(current.parent_id);
+  }
+  return parts.join(' › ');
 }
 
 // ========== 成本計算工具 ==========
@@ -363,63 +118,153 @@ export async function getCostMethod(): Promise<'fifo' | 'average'> {
   return rows[0]?.value === 'average' ? 'average' : 'fifo';
 }
 
-export async function stockIn(inventoryId: number, quantity: number, unitCost: number, supplier: string = '', note: string = ''): Promise<number> {
-  const batch = await pool.query(
-    'INSERT INTO inventory_batches (inventory_id, unit_cost, quantity, remaining, supplier, note) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
-    [inventoryId, unitCost, quantity, quantity, supplier, note]
-  );
-  const batchId = batch.rows[0].id;
+/** 依批次剩餘量重算庫存數量和平均成本（一句處理多個商品） */
+const recalcStatement = (inventoryIds: number[]): [string, unknown[]] => [
+  `UPDATE inventory SET
+     quantity = COALESCE((SELECT SUM(remaining) FROM inventory_batches b WHERE b.inventory_id = inventory.id AND b.remaining > 0), 0),
+     avg_cost = COALESCE((SELECT CAST(SUM(remaining * unit_cost) AS REAL) / SUM(remaining) FROM inventory_batches b
+                          WHERE b.inventory_id = inventory.id AND b.remaining > 0), 0),
+     updated_at = NOW()
+   WHERE id IN (SELECT value FROM json_each($1))`,
+  [JSON.stringify([...new Set(inventoryIds)])],
+];
 
-  await pool.query(
-    'INSERT INTO inventory_logs (inventory_id, type, change_qty, unit_cost, total_cost, reason, batch_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-    [inventoryId, 'in', quantity, unitCost, unitCost * quantity, supplier ? `進貨 (${supplier})` : '進貨', batchId]
+export async function recalcInventory(inventoryId: number): Promise<void> {
+  await pool.batch([recalcStatement([inventoryId])]);
+}
+
+interface BatchTake {
+  id: number;
+  take: number;
+}
+
+/** 從多個批次扣量（一句）；同一個批次出現多次（訂單裡兩項扣同一批）要先加總，UPDATE 每列只會套用一次 */
+const takeFromBatchesStatement = (takes: BatchTake[]): [string, unknown[]] => {
+  const merged = new Map<number, number>();
+  for (const t of takes) merged.set(t.id, (merged.get(t.id) ?? 0) + t.take);
+  return [
+    `UPDATE inventory_batches
+     SET remaining = remaining - (SELECT json_extract(j.value, '$.take') FROM json_each($1) j WHERE json_extract(j.value, '$.id') = inventory_batches.id)
+     WHERE id IN (SELECT json_extract(value, '$.id') FROM json_each($1))`,
+    [JSON.stringify([...merged].map(([id, take]) => ({ id, take })))],
+  ];
+};
+
+interface LogEntry {
+  inventory_id: number;
+  type: 'in' | 'out';
+  change_qty: number;
+  unit_cost: number;
+  total_cost: number;
+  reason: string;
+  batch_id: number | null;
+}
+
+/** 寫多筆庫存異動紀錄（一句） */
+const insertLogsStatement = (logs: LogEntry[]): [string, unknown[]] => [
+  `INSERT INTO inventory_logs (inventory_id, type, change_qty, unit_cost, total_cost, reason, batch_id)
+   SELECT json_extract(value, '$.inventory_id'), json_extract(value, '$.type'), json_extract(value, '$.change_qty'),
+          json_extract(value, '$.unit_cost'), json_extract(value, '$.total_cost'), json_extract(value, '$.reason'),
+          json_extract(value, '$.batch_id')
+   FROM json_each($1)`,
+  [JSON.stringify(logs)],
+];
+
+export interface StockInEntry {
+  inventory_id: number;
+  quantity: number;
+  unit_cost: number;
+}
+
+/**
+ * 進貨：每個商品建一個批次、記一筆異動、重算庫存。不管幾個商品都是 3 個查詢。
+ * 回傳每個新批次的 id（順序跟 entries 一樣）
+ */
+export async function stockInMany(entries: StockInEntry[], supplier = '', note = ''): Promise<number[]> {
+  if (entries.length === 0) return [];
+  const indexed = entries.map((e, i) => ({ ...e, i }));
+  const { rows: batches } = await pool.query<{ id: number; inventory_id: number; unit_cost: number; quantity: number; i: number }>(
+    `INSERT INTO inventory_batches (inventory_id, unit_cost, quantity, remaining, supplier, note)
+     SELECT json_extract(value, '$.inventory_id'), json_extract(value, '$.unit_cost'), json_extract(value, '$.quantity'),
+            json_extract(value, '$.quantity'), $2, $3
+     FROM json_each($1) ORDER BY json_extract(value, '$.i')
+     RETURNING id, inventory_id, unit_cost, quantity`,
+    [JSON.stringify(indexed), supplier, note],
   );
 
-  await recalcInventory(inventoryId);
+  const reason = supplier ? `進貨 (${supplier})` : '進貨';
+  await pool.batch([
+    insertLogsStatement(
+      batches.map((b) => ({
+        inventory_id: b.inventory_id,
+        type: 'in',
+        change_qty: b.quantity,
+        unit_cost: b.unit_cost,
+        total_cost: b.unit_cost * b.quantity,
+        reason,
+        batch_id: b.id,
+      })),
+    ),
+    recalcStatement(batches.map((b) => b.inventory_id)),
+  ]);
+  return batches.map((b) => b.id);
+}
+
+export async function stockIn(inventoryId: number, quantity: number, unitCost: number, supplier = '', note = ''): Promise<number> {
+  const [batchId] = await stockInMany([{ inventory_id: inventoryId, quantity, unit_cost: unitCost }], supplier, note);
   return batchId;
 }
 
-export async function stockOut(inventoryId: number, quantity: number, reason: string = '出貨'): Promise<{ totalCost: number; unitCost: number }> {
-  const method = await getCostMethod();
-  let totalCost = 0;
+interface BatchRow {
+  id: number;
+  inventory_id: number;
+  unit_cost: number;
+  remaining: number;
+}
+
+/** 依序從批次扣 quantity，回傳每個批次扣了多少（會改到 batches 裡的 remaining，讓同一個商品的下一筆接著算） */
+function allocate(batches: BatchRow[], quantity: number): { take: BatchTake & { unit_cost: number }; }[] {
+  const takes: { take: BatchTake & { unit_cost: number } }[] = [];
   let remaining = quantity;
-
-  if (method === 'fifo') {
-    const { rows: batches } = await pool.query(
-      'SELECT * FROM inventory_batches WHERE inventory_id = $1 AND remaining > 0 ORDER BY batch_date ASC, id ASC',
-      [inventoryId]
-    );
-    for (const batch of batches) {
-      if (remaining <= 0) break;
-      const take = Math.min(remaining, batch.remaining);
-      totalCost += take * batch.unit_cost;
-      remaining -= take;
-      await pool.query('UPDATE inventory_batches SET remaining = remaining - $1 WHERE id = $2', [take, batch.id]);
-    }
-  } else {
-    const { rows } = await pool.query('SELECT avg_cost FROM inventory WHERE id = $1', [inventoryId]);
-    totalCost = Math.round(rows[0].avg_cost * quantity);
-    const { rows: batches } = await pool.query(
-      'SELECT * FROM inventory_batches WHERE inventory_id = $1 AND remaining > 0 ORDER BY id ASC',
-      [inventoryId]
-    );
-    for (const batch of batches) {
-      if (remaining <= 0) break;
-      const take = Math.min(remaining, batch.remaining);
-      remaining -= take;
-      await pool.query('UPDATE inventory_batches SET remaining = remaining - $1 WHERE id = $2', [take, batch.id]);
-    }
+  for (const batch of batches) {
+    if (remaining <= 0) break;
+    if (batch.remaining <= 0) continue;
+    const take = Math.min(remaining, batch.remaining);
+    batch.remaining -= take;
+    remaining -= take;
+    takes.push({ take: { id: batch.id, take, unit_cost: batch.unit_cost } });
   }
+  return takes;
+}
 
-  const actualQty = quantity - remaining;
-  const unitCost = actualQty > 0 ? Math.round(totalCost / actualQty) : 0;
-
-  await pool.query(
-    'INSERT INTO inventory_logs (inventory_id, type, change_qty, unit_cost, total_cost, reason) VALUES ($1,$2,$3,$4,$5,$6)',
-    [inventoryId, 'out', -actualQty, unitCost, totalCost, reason]
+export async function stockOut(inventoryId: number, quantity: number, reason = '出貨'): Promise<{ totalCost: number; unitCost: number }> {
+  const method = await getCostMethod();
+  const { rows: batches } = await pool.query<BatchRow>(
+    method === 'fifo'
+      ? 'SELECT id, inventory_id, unit_cost, remaining FROM inventory_batches WHERE inventory_id = $1 AND remaining > 0 ORDER BY batch_date ASC, id ASC'
+      : 'SELECT id, inventory_id, unit_cost, remaining FROM inventory_batches WHERE inventory_id = $1 AND remaining > 0 ORDER BY id ASC',
+    [inventoryId],
   );
 
-  await recalcInventory(inventoryId);
+  const takes = allocate(batches, quantity).map((t) => t.take);
+  const actualQty = takes.reduce((sum, t) => sum + t.take, 0);
+
+  let totalCost: number;
+  if (method === 'fifo') {
+    totalCost = takes.reduce((sum, t) => sum + t.take * t.unit_cost, 0);
+  } else {
+    const { rows } = await pool.query('SELECT avg_cost FROM inventory WHERE id = $1', [inventoryId]);
+    totalCost = Math.round((rows[0]?.avg_cost ?? 0) * quantity);
+  }
+  const unitCost = actualQty > 0 ? Math.round(totalCost / actualQty) : 0;
+
+  await pool.batch([
+    takeFromBatchesStatement(takes),
+    insertLogsStatement([
+      { inventory_id: inventoryId, type: 'out', change_qty: -actualQty, unit_cost: unitCost, total_cost: totalCost, reason, batch_id: null },
+    ]),
+    recalcStatement([inventoryId]),
+  ]);
   return { totalCost, unitCost };
 }
 
@@ -429,6 +274,7 @@ export async function stockOut(inventoryId: number, quantity: number, reason: st
 // 依 FIFO 從庫存批次扣量；逐批次紀錄到 quotation_stock_deductions，
 // 之後狀態回退（draft/cancelled）或刪單時，依紀錄把量加回原批次，
 // 若批次已被刪除（庫存品被刪掉），則改建新批次補回。
+// 跟原本不同的是：寫入都在同一個 batch（交易）裡，中途失敗不會只扣一半。
 
 export const DEDUCTING_QUOTATION_STATUSES = new Set(['deposit', 'pending', 'completed']);
 export function isDeductingStatus(status: string): boolean {
@@ -436,101 +282,150 @@ export function isDeductingStatus(status: string): boolean {
 }
 
 export async function deductQuotationStock(quotationId: number): Promise<void> {
-  const { rows: items } = await pool.query(
+  const { rows: items } = await pool.query<{ id: number; inventory_id: number; name: string; quantity: number }>(
     `SELECT id, inventory_id, name, quantity FROM quotation_items
-     WHERE quotation_id = $1 AND inventory_id IS NOT NULL AND quantity > 0`,
-    [quotationId]
+     WHERE quotation_id = $1 AND inventory_id IS NOT NULL AND quantity > 0 ORDER BY id`,
+    [quotationId],
   );
   if (!items.length) {
     await pool.query('UPDATE quotations SET stock_deducted = 1 WHERE id = $1', [quotationId]);
     return;
   }
 
+  const inventoryIds = [...new Set(items.map((it) => it.inventory_id))];
+  const idsJson = JSON.stringify(inventoryIds);
+  const [{ rows: inventories }, { rows: batches }] = await pool.batch([
+    ['SELECT id, name, quantity FROM inventory WHERE id IN (SELECT value FROM json_each($1))', [idsJson]],
+    [
+      `SELECT id, inventory_id, unit_cost, remaining FROM inventory_batches
+       WHERE inventory_id IN (SELECT value FROM json_each($1)) AND remaining > 0 ORDER BY batch_date ASC, id ASC`,
+      [idsJson],
+    ],
+  ]);
+
   // 預檢查：合計同一個 inventory_id 的需求量，避免單筆夠但合計不夠
   const needByInv = new Map<number, number>();
   for (const it of items) needByInv.set(it.inventory_id, (needByInv.get(it.inventory_id) || 0) + it.quantity);
+  const invById = new Map(inventories.map((inv: any) => [inv.id as number, inv]));
   for (const [invId, need] of needByInv) {
-    const { rows } = await pool.query('SELECT name, quantity FROM inventory WHERE id = $1', [invId]);
-    if (!rows.length) continue; // 商品被刪了，跳過（不扣也不報錯）
-    if (rows[0].quantity < need) {
-      throw new Error(`庫存不足：${rows[0].name}（需要 ${need}，目前 ${rows[0].quantity}）`);
+    const inv = invById.get(invId);
+    if (!inv) continue; // 商品被刪了，跳過（不扣也不報錯）
+    if (inv.quantity < need) {
+      throw new Error(`庫存不足：${inv.name}（需要 ${need}，目前 ${inv.quantity}）`);
     }
   }
 
+  const batchesByInv = new Map<number, BatchRow[]>();
+  for (const b of batches as BatchRow[]) {
+    const list = batchesByInv.get(b.inventory_id) ?? [];
+    list.push(b);
+    batchesByInv.set(b.inventory_id, list);
+  }
+
+  const takes: BatchTake[] = [];
+  const deductions: { inventory_id: number; batch_id: number; take: number; unit_cost: number }[] = [];
+  const logs: LogEntry[] = [];
   for (const item of items) {
-    let remaining: number = item.quantity;
-    const { rows: batches } = await pool.query(
-      'SELECT id, unit_cost, remaining FROM inventory_batches WHERE inventory_id = $1 AND remaining > 0 ORDER BY batch_date ASC, id ASC',
-      [item.inventory_id]
-    );
-    if (!batches.length) continue; // 沒有批次紀錄就跳過
-    for (const batch of batches) {
-      if (remaining <= 0) break;
-      const take = Math.min(remaining, batch.remaining);
-      await pool.query('UPDATE inventory_batches SET remaining = remaining - $1 WHERE id = $2', [take, batch.id]);
-      await pool.query(
-        'INSERT INTO quotation_stock_deductions (quotation_id, inventory_id, batch_id, quantity, unit_cost) VALUES ($1,$2,$3,$4,$5)',
-        [quotationId, item.inventory_id, batch.id, take, batch.unit_cost]
-      );
-      await pool.query(
-        'INSERT INTO inventory_logs (inventory_id, type, change_qty, unit_cost, total_cost, reason, batch_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-        [item.inventory_id, 'out', -take, batch.unit_cost, take * batch.unit_cost, `訂單扣帳 #${quotationId}`, batch.id]
-      );
-      remaining -= take;
+    const invBatches = batchesByInv.get(item.inventory_id);
+    if (!invBatches?.length) continue; // 沒有批次紀錄就跳過
+    for (const { take } of allocate(invBatches, item.quantity)) {
+      takes.push({ id: take.id, take: take.take });
+      deductions.push({ inventory_id: item.inventory_id, batch_id: take.id, take: take.take, unit_cost: take.unit_cost });
+      logs.push({
+        inventory_id: item.inventory_id,
+        type: 'out',
+        change_qty: -take.take,
+        unit_cost: take.unit_cost,
+        total_cost: take.take * take.unit_cost,
+        reason: `訂單扣帳 #${quotationId}`,
+        batch_id: take.id,
+      });
     }
-    await recalcInventory(item.inventory_id);
   }
 
-  await pool.query('UPDATE quotations SET stock_deducted = 1 WHERE id = $1', [quotationId]);
+  await pool.batch([
+    takeFromBatchesStatement(takes),
+    [
+      `INSERT INTO quotation_stock_deductions (quotation_id, inventory_id, batch_id, quantity, unit_cost)
+       SELECT $1, json_extract(value, '$.inventory_id'), json_extract(value, '$.batch_id'), json_extract(value, '$.take'), json_extract(value, '$.unit_cost')
+       FROM json_each($2)`,
+      [quotationId, JSON.stringify(deductions)],
+    ],
+    insertLogsStatement(logs),
+    recalcStatement(inventoryIds),
+    ['UPDATE quotations SET stock_deducted = 1 WHERE id = $1', [quotationId]],
+  ]);
 }
 
 export async function restoreQuotationStock(quotationId: number): Promise<void> {
-  const { rows: deductions } = await pool.query(
-    'SELECT * FROM quotation_stock_deductions WHERE quotation_id = $1',
-    [quotationId]
+  const { rows: deductions } = await pool.query<{ inventory_id: number; batch_id: number; quantity: number; unit_cost: number }>(
+    'SELECT inventory_id, batch_id, quantity, unit_cost FROM quotation_stock_deductions WHERE quotation_id = $1',
+    [quotationId],
   );
   if (!deductions.length) {
     await pool.query('UPDATE quotations SET stock_deducted = 0 WHERE id = $1', [quotationId]);
     return;
   }
 
-  const inventoryIds = new Set<number>();
+  const [{ rows: existingBatches }, { rows: existingInventory }] = await pool.batch([
+    ['SELECT id FROM inventory_batches WHERE id IN (SELECT value FROM json_each($1))', [JSON.stringify(deductions.map((d) => d.batch_id))]],
+    ['SELECT id FROM inventory WHERE id IN (SELECT value FROM json_each($1))', [JSON.stringify(deductions.map((d) => d.inventory_id))]],
+  ]);
+  const batchExists = new Set(existingBatches.map((b: any) => b.id as number));
+  const inventoryExists = new Set(existingInventory.map((i: any) => i.id as number));
+
+  const putBack: BatchTake[] = [];
+  const logs: LogEntry[] = [];
+  const rebuild: StockInEntry[] = [];
   for (const d of deductions) {
-    const { rows: batchRows } = await pool.query('SELECT id FROM inventory_batches WHERE id = $1', [d.batch_id]);
-    if (batchRows.length) {
-      await pool.query('UPDATE inventory_batches SET remaining = remaining + $1 WHERE id = $2', [d.quantity, d.batch_id]);
-      await pool.query(
-        'INSERT INTO inventory_logs (inventory_id, type, change_qty, unit_cost, total_cost, reason, batch_id) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-        [d.inventory_id, 'in', d.quantity, d.unit_cost, d.quantity * d.unit_cost, `訂單還原 #${quotationId}`, d.batch_id]
-      );
-    } else {
+    if (batchExists.has(d.batch_id)) {
+      putBack.push({ id: d.batch_id, take: -d.quantity }); // 扣負數 = 加回去
+      logs.push({
+        inventory_id: d.inventory_id,
+        type: 'in',
+        change_qty: d.quantity,
+        unit_cost: d.unit_cost,
+        total_cost: d.quantity * d.unit_cost,
+        reason: `訂單還原 #${quotationId}`,
+        batch_id: d.batch_id,
+      });
+    } else if (inventoryExists.has(d.inventory_id)) {
       // 原批次已不存在，改建新批次補回
-      const { rows: invRows } = await pool.query('SELECT id FROM inventory WHERE id = $1', [d.inventory_id]);
-      if (invRows.length) {
-        await stockIn(d.inventory_id, d.quantity, d.unit_cost, '', `訂單還原 #${quotationId}`);
-      }
+      rebuild.push({ inventory_id: d.inventory_id, quantity: d.quantity, unit_cost: d.unit_cost });
     }
-    inventoryIds.add(d.inventory_id);
   }
-  for (const invId of inventoryIds) {
-    await recalcInventory(invId);
+
+  await pool.batch([
+    takeFromBatchesStatement(putBack),
+    insertLogsStatement(logs),
+    recalcStatement(deductions.map((d) => d.inventory_id)),
+    ['DELETE FROM quotation_stock_deductions WHERE quotation_id = $1', [quotationId]],
+    ['UPDATE quotations SET stock_deducted = 0 WHERE id = $1', [quotationId]],
+  ]);
+  if (rebuild.length) {
+    await stockInMany(rebuild, '', `訂單還原 #${quotationId}`);
   }
-  await pool.query('DELETE FROM quotation_stock_deductions WHERE quotation_id = $1', [quotationId]);
-  await pool.query('UPDATE quotations SET stock_deducted = 0 WHERE id = $1', [quotationId]);
 }
 
-export async function recalcInventory(inventoryId: number): Promise<void> {
-  const { rows } = await pool.query(
-    'SELECT COALESCE(SUM(remaining), 0) as qty, COALESCE(SUM(remaining * unit_cost), 0) as total_cost FROM inventory_batches WHERE inventory_id = $1 AND remaining > 0',
-    [inventoryId]
-  );
-  const result = rows[0];
-  const avgCost = result.qty > 0 ? result.total_cost / result.qty : 0;
+// ========== 報價單明細（一句寫完） ==========
 
+export async function insertQuotationItems(quotationId: number, items: any[] | undefined): Promise<void> {
+  if (!items?.length) return;
+  const rows = items.map((item) => ({
+    category: item.category || '',
+    name: item.name,
+    spec: item.spec || '',
+    cost: item.cost || 0,
+    price: item.price || 0,
+    quantity: item.quantity || 1,
+    inventory_id: item.inventory_id || null,
+  }));
   await pool.query(
-    'UPDATE inventory SET quantity = $1, avg_cost = $2, updated_at = NOW() WHERE id = $3',
-    [result.qty, avgCost, inventoryId]
+    `INSERT INTO quotation_items (quotation_id, category, name, spec, cost, price, quantity, inventory_id)
+     SELECT $1, json_extract(value, '$.category'), json_extract(value, '$.name'), json_extract(value, '$.spec'),
+            json_extract(value, '$.cost'), json_extract(value, '$.price'), json_extract(value, '$.quantity'),
+            json_extract(value, '$.inventory_id')
+     FROM json_each($2)`,
+    [quotationId, JSON.stringify(rows)],
   );
 }
-
-export default pool;

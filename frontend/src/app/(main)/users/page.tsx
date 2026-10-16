@@ -20,6 +20,7 @@ const ALL_PAGES = [
 
 interface UserData {
   id: number;
+  email: string;
   username: string;
   display_name: string;
   role: string;
@@ -36,7 +37,7 @@ export default function UsersPage() {
   const { isAdmin } = useAuth();
 
   const [form, setForm] = useState({
-    username: '', password: '', display_name: '', role: 'user', is_active: 1, permissions: [] as string[],
+    email: '', display_name: '', role: 'user', is_active: 1, permissions: [] as string[],
   });
 
   const loadUsers = async () => {
@@ -55,10 +56,10 @@ export default function UsersPage() {
   const openForm = (user?: UserData) => {
     if (user) {
       setEditUser(user);
-      setForm({ username: user.username, password: '', display_name: user.display_name, role: user.role, is_active: user.is_active, permissions: user.permissions || [] });
+      setForm({ email: user.email || user.username, display_name: user.display_name, role: user.role, is_active: user.is_active, permissions: user.permissions || [] });
     } else {
       setEditUser(null);
-      setForm({ username: '', password: '', display_name: '', role: 'user', is_active: 1, permissions: [] });
+      setForm({ email: '', display_name: '', role: 'user', is_active: 1, permissions: [] });
     }
     setModalOpen(true);
   };
@@ -68,11 +69,10 @@ export default function UsersPage() {
     try {
       if (editUser) {
         const data: any = { display_name: form.display_name, role: form.role, is_active: form.is_active, permissions: form.permissions };
-        if (form.password) data.password = form.password;
         await api.put(`/auth/users/${editUser.id}`, data);
         showToast('已更新');
       } else {
-        if (!form.username || !form.password) { showToast('帳號密碼必填', 'warning'); return; }
+        if (!form.email) { showToast('請輸入 email', 'warning'); return; }
         await api.post('/auth/users', form);
         showToast('已新增');
       }
@@ -135,7 +135,7 @@ export default function UsersPage() {
                   <td>{u.is_active ? <span className="badge bg-success">啟用</span> : <span className="badge bg-secondary">停用</span>}</td>
                   <td>
                     <button className="btn btn-sm btn-outline-primary me-1" onClick={() => openForm(u)}><i className="bi bi-pencil" /></button>
-                    {u.username !== 'admin' && <button className="btn btn-sm btn-outline-danger" onClick={() => handleDelete(u.id)}><i className="bi bi-trash" /></button>}
+                    {<button className="btn btn-sm btn-outline-danger" onClick={() => handleDelete(u.id)}><i className="bi bi-trash" /></button>}
                   </td>
                 </tr>
               ))}
@@ -152,12 +152,11 @@ export default function UsersPage() {
         </>}>
         <div className="row g-3">
           <div className="col-md-6">
-            <label className="form-label">帳號 *</label>
-            <input type="text" className="form-control" value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))} readOnly={!!editUser} />
-          </div>
-          <div className="col-md-6">
-            <label className="form-label">{editUser ? '新密碼 (留空不變)' : '密碼 *'}</label>
-            <input type="password" className="form-control" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
+            <label className="form-label">Email *</label>
+            <input type="email" className="form-control" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} readOnly={!!editUser} placeholder="name@example.com" />
+            <div className="form-text">
+              用這個 email 登入（Cloudflare Access）。新增後也要把它加進 Access 的允許清單，才進得了網站。
+            </div>
           </div>
           <div className="col-md-6">
             <label className="form-label">顯示名稱</label>

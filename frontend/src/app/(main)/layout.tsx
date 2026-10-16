@@ -1,21 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import Sidebar from '@/components/layout/Sidebar';
 import TopBar from '@/components/layout/TopBar';
+import NotSignedIn from '@/components/NotSignedIn';
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
-  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push('/login');
-    }
-  }, [user, loading, router]);
 
   if (loading) {
     return (
@@ -25,7 +18,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
     );
   }
 
-  if (!user) return null;
+  if (!user) return <NotSignedIn />;
 
   return (
     <div className="d-flex">
