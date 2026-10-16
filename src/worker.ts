@@ -10,20 +10,20 @@ import settingsRouter from './routes/settings';
 import purchasesRouter from './routes/purchases';
 import reportsRouter from './routes/reports';
 import publishRouter from './routes/publish';
+import inspectionsRouter from './routes/inspections';
 
 const APP_VERSION = '2.0.0';
 
-// 跟原本 server.ts 的 app.use 一樣：前綴 → middleware + router
-const mounts: [string, Handler[], Router][] = [
-  ['/api/auth', [], authRouter],
-  ['/api/inventory', [authMiddleware], inventoryRouter],
-  ['/api/quotations', [authMiddleware], quotationsRouter],
-  // 發布到官網（/api/quotations/:id/publish…），沒對到的路徑 quotationsRouter 會往下交給它
-  ['/api/quotations', [authMiddleware], publishRouter],
-  ['/api/customers', [authMiddleware], customersRouter],
-  ['/api/purchases', [authMiddleware], purchasesRouter],
-  ['/api/reports', [authMiddleware], reportsRouter],
-  ['/api/settings', [authMiddleware], settingsRouter],
+// 跟原本 server.ts 的 app.use 一樣：前綴 → middleware + router（同一個前綴可以有好幾個 router，依序比對）
+const mounts: [string, Handler[], Router[]][] = [
+  ['/api/auth', [], [authRouter]],
+  ['/api/inventory', [authMiddleware], [inventoryRouter]],
+  // 訂單、發布到官網（:id/publish…）、出機檢測表（:id/inspection）
+  ['/api/quotations', [authMiddleware], [quotationsRouter, publishRouter, inspectionsRouter]],
+  ['/api/customers', [authMiddleware], [customersRouter]],
+  ['/api/purchases', [authMiddleware], [purchasesRouter]],
+  ['/api/reports', [authMiddleware], [reportsRouter]],
+  ['/api/settings', [authMiddleware], [settingsRouter]],
 ];
 
 const SECURITY_HEADERS: Record<string, string> = {
@@ -85,11 +85,14 @@ async function route(request: globalThis.Request, env: Env): Promise<globalThis.
     return serveUpload(env, url.pathname.slice('/api/uploads/'.length));
   }
 
-  for (const [prefix, middlewares, router] of mounts) {
+  for (const [prefix, middlewares, routers] of mounts) {
     if (url.pathname !== prefix && !url.pathname.startsWith(`${prefix}/`)) continue;
     // 先跑 middleware（登入檢查），沒通過就回它的錯誤
     if (middlewares.length && (await runHandlers(middlewares, req, res))) return res.toResponse();
-    if (await router.handle(req, res, url.pathname.slice(prefix.length))) return res.toResponse();
+    for (const router of routers) {
+      if (await router.handle(req, res, url.pathname.slice(prefix.length))) return res.toResponse();
+    }
+    break;
   }
   return json(404, { error: '找不到這個 API' });
 }

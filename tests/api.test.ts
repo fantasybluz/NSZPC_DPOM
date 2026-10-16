@@ -262,6 +262,43 @@ describe('Inventory + quotation stock', () => {
   });
 });
 
+// ========== 出機檢測表 ==========
+describe('Inspection API', () => {
+  it('沒存過給草稿（規格從品項帶入），存了之後讀回來一樣', async () => {
+    const q = await request('POST', '/api/quotations', {
+      customer_name: `檢測測試${unique}`,
+      items: [
+        { category: 'AM5', name: 'Ryzen 5 9600X', cost: 1, price: 1, quantity: 1 },
+        { category: '記憶體', name: 'DDR5 16GB', cost: 1, price: 1, quantity: 2 },
+      ],
+    });
+    const draft = await request('GET', `/api/quotations/${q.body.id}/inspection`);
+    assert.equal(draft.status, 200);
+    assert.equal(draft.body.saved, false);
+    assert.match(draft.body.report.machineSpec, /CPU：Ryzen 5 9600X/); // 子分類 AM5 對到 CPU
+    assert.match(draft.body.report.machineSpec, /記憶體：DDR5 16GB x2/);
+    assert.ok(draft.body.report.stress.length > 5);
+    assert.ok(draft.body.report.checks.some((c: any) => c.section === 'system'));
+
+    const report = { ...draft.body.report, conclusion: 'conditional', ambientTemp: 27.5 };
+    report.stress[0] = { ...report.stress[0], tempMax: 88, powerMax: 230, status: 'warn', note: '<b>偏高</b>' };
+    report.checks[0] = { ...report.checks[0], status: 'bogus' };
+    assert.equal((await request('PUT', `/api/quotations/${q.body.id}/inspection`, report)).status, 200);
+
+    const again = await request('GET', `/api/quotations/${q.body.id}/inspection`);
+    assert.equal(again.body.saved, true);
+    assert.equal(again.body.report.conclusion, 'conditional');
+    assert.equal(again.body.report.ambientTemp, 27.5);
+    assert.equal(again.body.report.stress[0].tempMax, 88);
+    assert.equal(again.body.report.stress[0].note, '<b>偏高</b>'); // 原樣存，畫面用 React 顯示不會變成 HTML
+    assert.equal(again.body.report.checks[0].status, 'pass'); // 不合法的狀態改回預設
+
+    // 刪訂單會一起刪檢測表
+    assert.equal((await request('DELETE', `/api/quotations/${q.body.id}`)).status, 200);
+    assert.equal((await request('GET', `/api/quotations/${q.body.id}/inspection`)).status, 404);
+  });
+});
+
 // ========== 報價單圖片（R2） ==========
 describe('Quotation images', () => {
   it('上傳、讀取、刪除', async () => {

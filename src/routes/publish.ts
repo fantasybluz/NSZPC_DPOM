@@ -4,7 +4,8 @@
 // 官網上只放規格、照片、售價（不含服務費），不會帶客戶姓名、電話、成本。
 // quotations.website_order_id 記住對到哪一筆，再發布一次就是更新。
 import { Router, type Request, type Response } from '../lib/router';
-import pool, { categoryPath, loadCategories, taipeiDate } from '../models/database';
+import pool, { taipeiDate } from '../models/database';
+import { specsFromItems } from '../lib/specs';
 
 const router = new Router();
 
@@ -40,18 +41,6 @@ interface WebsiteAPI {
 const website = (req: Request) => req.env.WEBSITE as unknown as WebsiteAPI;
 const refOf = (quotationId: number) => `dpom-${quotationId}`;
 
-// 第一層分類 → 官網的規格欄位（跟出機檢查單同一套對應）
-const SPEC_FIELDS: Record<string, keyof PublishOrderInput> = {
-  CPU: 'cpu',
-  主機板: 'motherboard',
-  記憶體: 'ram',
-  硬碟: 'storage',
-  顯示卡: 'gpu',
-  電源供應器: 'psu',
-  散熱: 'cooler',
-  機殼: 'pcCase',
-};
-
 const STATUS_BY_DELIVERY: Record<string, PublishOrderInput['status']> = {
   shipped: 'shipping',
   delivered: 'delivered',
@@ -72,19 +61,7 @@ router.get('/:id/publish-draft', async (req: Request, res: Response) => {
   ]);
   if (!q) return res.status(404).json({ error: '找不到訂單' });
 
-  // 品項的分類名稱 → 第一層分類（例如「AM5」→「CPU」）
-  const cats = await loadCategories();
-  const rootOf = (name: string): string => {
-    const c = cats.find((x) => x.name === name);
-    return c ? categoryPath(cats, c.id).split(' › ')[0] : name;
-  };
-  const specs: Record<string, string[]> = {};
-  for (const it of items as { category: string; name: string; spec: string; quantity: number }[]) {
-    const field = SPEC_FIELDS[rootOf(it.category)];
-    if (!field) continue;
-    const text = [it.name, it.spec].filter(Boolean).join(' ') + (it.quantity > 1 ? ` x${it.quantity}` : '');
-    (specs[field] ??= []).push(text);
-  }
+  const specs = await specsFromItems(items as { category: string; name: string; spec: string; quantity: number }[]);
 
   let tags: string[] = [];
   try { tags = await website(req).orderTags(); } catch { /* 官網暫時連不到就不給建議 */ }
@@ -98,11 +75,8 @@ router.get('/:id/publish-draft', async (req: Request, res: Response) => {
     location: q.demand_area || '',
     salePrice: Math.max(0, (q.total_price || 0) - (q.service_fee || 0)),
     status: STATUS_BY_DELIVERY[q.delivery_status] || 'delivered',
-    cpu: '', motherboard: '', ram: '', storage: '', gpu: '', psu: '', cooler: '', pcCase: '',
+    ...specs,
   };
-  for (const field of Object.values(SPEC_FIELDS)) {
-    (draft as any)[field] = (specs[field] ?? []).join(' / ');
-  }
 
   res.json({
     draft,

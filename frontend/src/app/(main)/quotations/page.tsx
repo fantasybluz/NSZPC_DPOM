@@ -8,6 +8,7 @@ import PaginationComp from '@/components/ui/Pagination';
 import * as Fmt from '@/lib/format';
 import QuoteDocModal, { type QuoteDocData } from '@/components/QuoteDocModal';
 import PublishModal from '@/components/PublishModal';
+import InspectionModal from '@/components/InspectionModal';
 
 // ===== Constants =====
 
@@ -111,6 +112,8 @@ export default function QuotationsPage() {
   // 發布到官網（變成 NSZ_PC 的出機紀錄）
   const [publishId, setPublishId] = useState<number | null>(null);
   const closePublish = useCallback(() => setPublishId(null), []);
+  // 出機檢測表（填實測數據、存起來、匯出給客人；原本是開新視窗列印空白的檢查單）
+  const [inspectionId, setInspectionId] = useState<number | null>(null);
 
   // Detail modal
   const [detailOpen, setDetailOpen] = useState(false);
@@ -455,141 +458,6 @@ export default function QuotationsPage() {
     } catch (err: any) { showToast(err.message, 'danger'); }
   };
 
-  // Export QC sheet (print)
-  const exportQC = async (id: number) => {
-    try {
-      const q = await api.get<Quotation>(`/quotations/${id}`);
-      let localCatTree: CatNode[] = [];
-      try { localCatTree = await api.get<CatNode[]>('/inventory/categories'); } catch { /* ignore */ }
-
-      let shopAddr = '(請至設定頁面填寫)';
-      let shopPhone = '(請至設定頁面填寫)';
-      let shopLine = '(請至設定頁面填寫)';
-      try {
-        const [a, p, l] = await Promise.all([
-          api.get<{ value: string }>('/settings/shop_address'),
-          api.get<{ value: string }>('/settings/shop_phone'),
-          api.get<{ value: string }>('/settings/shop_line'),
-        ]);
-        shopAddr = a.value || shopAddr;
-        shopPhone = p.value || shopPhone;
-        shopLine = l.value || shopLine;
-      } catch { /* ignore */ }
-
-      const getCatNames = (parentName: string): string[] => {
-        const parent = localCatTree.find(c => c.name === parentName);
-        if (!parent) return [parentName];
-        if (parent.children?.length) return parent.children.map(c => c.name);
-        return [parentName];
-      };
-
-      const getSpec = (parentName: string): string => {
-        const names = getCatNames(parentName);
-        const items = (q.items || []).filter(i => names.includes(i.category));
-        if (!items.length) return '待補充';
-        return items.map(i => `${i.name}${i.spec ? ' ' + i.spec : ''}`).join(', ');
-      };
-
-      const qcNo = `QC-${(q.ship_date || '').replace(/-/g, '')}-${String(q.id).padStart(6, '0')}`;
-      const now = new Date().toLocaleString('zh-TW');
-
-      const chk = (label: string) => `<td class="chk-label">${label}</td><td class="chk-box"></td>`;
-      const chk2 = (label: string) => `<td class="chk-label">${label}</td><td class="chk-box chk-wide"></td>`;
-
-      const printWindow = window.open('', '_blank');
-      if (!printWindow) return;
-      printWindow.document.write(`<!DOCTYPE html>
-<html lang="zh-TW"><head><meta charset="UTF-8">
-<title>出機檢查單 ${qcNo}</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, 'Microsoft JhengHei', sans-serif; padding: 40px; color: #333; font-size: 13px; }
-  h1 { font-size: 28px; margin-bottom: 2px; }
-  .subtitle { color: #888; font-size: 11px; letter-spacing: 3px; text-transform: uppercase; }
-  .shop-name { font-size: 14px; color: #666; margin-top: 4px; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
-  .header-right { text-align: right; font-size: 12px; color: #555; }
-  .header-right div { margin-bottom: 3px; }
-  .info-row { display: flex; gap: 20px; margin-bottom: 20px; }
-  .info-box { flex: 1; border: 1px solid #ddd; border-radius: 6px; padding: 14px; }
-  .info-box h3 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: #555; }
-  .info-box p { margin: 4px 0; font-size: 13px; }
-  h2 { font-size: 15px; font-weight: 700; margin: 18px 0 10px 0; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-  th, td { border: 1px solid #ddd; padding: 7px 10px; text-align: left; font-size: 12px; }
-  th { background: #f5f5f5; font-weight: 600; }
-  .config-table td:nth-child(odd) { font-weight: 600; background: #fafafa; width: 12%; }
-  .config-table td:nth-child(even) { width: 38%; }
-  .section-header { background: #f0f0f0; font-weight: 700; font-size: 12px; }
-  .section-header td { padding: 6px 10px; }
-  .chk-label { width: 30%; }
-  .chk-box { width: 3.3%; min-width: 28px; text-align: center; }
-  .chk-wide { width: 20%; }
-  .footer-row { display: flex; justify-content: space-between; align-items: center; margin-top: 40px; padding-top: 10px; }
-  .sign-line { border-top: 1px solid #333; width: 200px; text-align: center; padding-top: 5px; font-size: 12px; }
-  @media print { body { padding: 20px; } @page { margin: 15mm; } }
-</style></head><body>
-<div class="header">
-  <div>
-    <div class="subtitle">S H I P P I N G &nbsp; Q C</div>
-    <h1>出機檢查單</h1>
-    <div class="shop-name">星辰電腦 NSZPC</div>
-  </div>
-  <div class="header-right">
-    <div><strong>檢查單號：</strong>${qcNo}</div>
-    <div><strong>建立時間：</strong>${now}</div>
-    <div><strong>訂單類型：</strong>${DELIVERY_LABELS[q.delivery_status] || '未設定'}</div>
-  </div>
-</div>
-<div class="info-row">
-  <div class="info-box">
-    <h3>出機資訊</h3>
-    <p><strong>品項：</strong>${q.item_title || (q.customer_name + ' 主機') || '-'}</p>
-    <p><strong>需求地區：</strong>${q.demand_area || '-'}</p>
-    <p><strong>出貨日期：</strong>${q.ship_date || '-'}</p>
-  </div>
-  <div class="info-box">
-    <h3>店家資訊</h3>
-    <p><strong>地址：</strong>${shopAddr}</p>
-    <p><strong>電話：</strong>${shopPhone}</p>
-    <p><strong>LINE：</strong>${shopLine}</p>
-  </div>
-</div>
-<h2>本機配置</h2>
-<table class="config-table">
-  <tr><td>CPU</td><td>${getSpec('CPU')}</td><td>主機板</td><td>${getSpec('主機板')}</td></tr>
-  <tr><td>RAM</td><td>${getSpec('記憶體')}</td><td>硬碟</td><td>${getSpec('硬碟')}</td></tr>
-  <tr><td>顯示卡</td><td>${getSpec('顯示卡')}</td><td>散熱器</td><td>${getSpec('散熱')}</td></tr>
-  <tr><td>電源供應器</td><td>${getSpec('電源供應器')}</td><td>機殼</td><td>${getSpec('機殼')}</td></tr>
-</table>
-<h2>出貨前測試檢測表</h2>
-<table>
-  <tr class="section-header"><td colspan="6">Windows 系統 (OS)（Windows / Bios）</td></tr>
-  <tr>${chk('系統安裝')}${chk('BIOS 優化')}${chk('零組件相關驅動程式')}</tr>
-  <tr>${chk('主板驅動安裝')}${chk('顯卡驅動安裝')}${chk('主板(燈光/音效等)')}</tr>
-  <tr>${chk('水冷螢幕驅動')}${chk('硬碟4K對齊')}<td></td><td></td></tr>
-  <tr class="section-header"><td colspan="6">測試 OCCT（30M/1H）</td></tr>
-  <tr>${chk('CPU + RAM')}${chk('CPU')}${chk('RAM')}</tr>
-  <tr>${chk('LINPACK')}${chk('3D ADA')}${chk('VRAM')}</tr>
-  <tr>${chk('POWER')}<td colspan="4"></td></tr>
-  <tr class="section-header"><td colspan="6">測試 R23（測 CPU）</td></tr>
-  <tr>${chk('Multi Core')}${chk2('Single Core')}</tr>
-  <tr class="section-header"><td colspan="6">測試 AIDA64 + FURMARK（測 CPU / GPU）3H</td></tr>
-  <tr><td class="chk-label">CPU 滿載功耗/溫度</td><td class="chk-box"></td>${chk2('GPU 滿載功耗/溫度')}</tr>
-  <tr class="section-header"><td colspan="6">其他測試/配件檢查 AS SSD Benchmark</td></tr>
-  <tr>${chk('待機瓦數')}${chk('滿載瓦數')}${chk('整體穩定性')}</tr>
-  <tr>${chk('WIFI/藍芽')}${chk('前後音源孔')}${chk('前後USB')}</tr>
-  <tr>${chk('燈光同步')}${chk('電源線')}${chk('WIFI天線')}</tr>
-</table>
-<div class="footer-row">
-  <div>出貨日期：${q.ship_date || '________'}</div>
-  <div>出貨確認簽章：<span style="display:inline-block;width:200px;border-bottom:1px solid #333;">&nbsp;</span></div>
-</div>
-</body></html>`);
-      printWindow.document.close();
-      setTimeout(() => printWindow.print(), 500);
-    } catch (err: any) { showToast(err.message, 'danger'); }
-  };
 
   // ===== Item row helpers =====
 
@@ -747,7 +615,7 @@ export default function QuotationsPage() {
                       <button className="btn btn-sm btn-outline-primary" onClick={() => viewQuotation(q.id)} title="檢視"><i className="bi bi-eye" /></button>
                       <button className="btn btn-sm btn-outline-secondary ms-1" onClick={() => editQuotation(q.id)} title="編輯"><i className="bi bi-pencil" /></button>
                       <button className="btn btn-sm btn-outline-success ms-1" onClick={() => exportQuotation(q.id)} title="產出報價單"><i className="bi bi-file-earmark-text" /></button>
-                      <button className="btn btn-sm btn-outline-warning ms-1" onClick={() => exportQC(q.id)} title="出機檢查單"><i className="bi bi-clipboard-check" /></button>
+                      <button className="btn btn-sm btn-outline-warning ms-1" onClick={() => setInspectionId(q.id)} title="出機檢測表"><i className="bi bi-clipboard-check" /></button>
                       <button className="btn btn-sm btn-outline-success ms-1" onClick={() => setPublishId(q.id)} title="發布到官網"><i className="bi bi-globe" /></button>
                       <button className="btn btn-sm btn-outline-info ms-1" onClick={() => copyQuotation(q.id)} title="複製訂單"><i className="bi bi-copy" /></button>
                       <button className="btn btn-sm btn-outline-danger ms-1" onClick={() => confirmDelete(q.id)} title="刪除"><i className="bi bi-trash" /></button>
@@ -766,6 +634,7 @@ export default function QuotationsPage() {
       {/* ===== Detail Modal ===== */}
       <QuoteDocModal data={quoteDoc} onClose={() => setQuoteDoc(null)} />
       <PublishModal quotationId={publishId} onClose={closePublish} />
+      <InspectionModal quotationId={inspectionId} onClose={() => setInspectionId(null)} />
 
       <Modal show={detailOpen} onClose={() => setDetailOpen(false)} title={detail ? `訂單${detail.quotation_no}` : ''} size="lg"
         footer={<>

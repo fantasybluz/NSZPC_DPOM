@@ -378,3 +378,30 @@ body {
 .qdoc-notes { margin-top: 32px; font-size: 12px; color: #556; }
 .qdoc-notes-body { white-space: pre-line; margin-top: 4px; }
 .qdoc-text { white-space: pre-wrap; font-size: 12px; background: #f6f7f9; border: 1px solid #e3e6ea; border-radius: 6px; padding: 8px 10px; min-height: 110px; max-height: 220px; overflow: auto; margin: 0; font-family: inherit; }
+
+/* ============ 出機檢測表（沿用 .qdoc 的 A4 外框；components/InspectionModal.tsx） ============ */
+.qinsp-info { display: flex; flex-wrap: wrap; margin: 20px 0 4px; border: 1px solid #e6e9ef; }
+.qinsp-info .cell { width: 50%; padding: 8px 12px; border-bottom: 1px solid #e6e9ef; font-size: 12px; }
+.qinsp-info .cell:nth-child(odd) { border-right: 1px solid #e6e9ef; }
+.qinsp-info .cell.full { width: 100%; border-right: none; }
+.qinsp-info .k { color: #889; font-size: 11px; }
+.qinsp-info .v { color: #333; font-weight: 600; margin-top: 2px; white-space: pre-line; }
+.qinsp-sec { margin-top: 24px; }
+.qinsp-title { font-size: 15px; font-weight: 700; color: #1f2a44; border-left: 4px solid #1f2a44; padding-left: 8px; }
+.qinsp-desc { font-size: 11px; color: #667; line-height: 1.9; margin-top: 6px; background: #f7f9fc; border: 1px solid #e6e9ef; border-radius: 4px; padding: 8px 10px; text-align: justify; }
+table.qinsp { width: 100%; border-collapse: collapse; margin-top: 10px; }
+table.qinsp thead th { background: #1f2a44; color: #fff; font-size: 11px; padding: 8px 10px; text-align: left; font-weight: 500; }
+table.qinsp thead th.c, table.qinsp tbody td.c { text-align: center; white-space: nowrap; }
+table.qinsp tbody td { padding: 7px 10px; border-bottom: 1px solid #e6e9ef; font-size: 12px; vertical-align: top; }
+table.qinsp tbody td.name { font-weight: 600; color: #1f2a44; }
+table.qinsp tbody tr:nth-child(even) td { background: #f7f9fc; }
+.qbadge { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 10px; white-space: nowrap; }
+.qbadge.pass { background: #e6f6ec; color: #14713a; }
+.qbadge.warn { background: #fdf3e0; color: #8a5a05; }
+.qbadge.fail { background: #fdeaea; color: #a3252a; }
+.qbadge.na { background: #eef0f3; color: #6b7280; }
+.qinsp-verdict { margin-top: 24px; border: 2px solid #1f2a44; border-radius: 6px; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; }
+.qinsp-verdict .val { font-size: 18px; font-weight: 700; color: #1f2a44; margin-top: 2px; }
+.qinsp-verdict .meta { font-size: 11px; color: #667; text-align: right; line-height: 1.8; }
+.qinsp-sign { display: flex; justify-content: space-between; margin-top: 40px; font-size: 12px; color: #444; }
+.qinsp-sign .line { display: inline-block; width: 180px; border-bottom: 1px solid #333; }
