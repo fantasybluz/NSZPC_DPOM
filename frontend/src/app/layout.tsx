@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import 'bootstrap/dist/css/bootstrap.min.css';
 import 'bootstrap-icons/font/bootstrap-icons.min.css';
 import '@/styles/globals.css';
+// Apple 風格（DESIGN.md）疊在最上面
+import '@/styles/apple.css';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { ToastProvider } from '@/contexts/ToastContext';
 import BootstrapClient from '@/components/BootstrapClient';

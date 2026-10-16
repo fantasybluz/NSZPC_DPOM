@@ -228,7 +228,7 @@ export default function CategoriesPage() {
         onDragEnd={handleDragEnd}
       >
         {/* 放的位置只看這一列（不含底下展開的子分類） */}
-        <div className="cat-node-header" style={{ paddingLeft: 12 + depth * 24 }}
+        <div className="cat-node-header" style={{ paddingLeft: `calc(12px + ${depth} * var(--cat-indent, 24px))` }}
           onDragOver={e => handleDragOver(e, node)}
           onDragLeave={handleDragLeave}
           onDrop={e => handleDrop(e, node)}>

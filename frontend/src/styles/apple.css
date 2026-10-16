@@ -1,0 +1,242 @@
+/* ==========================================================================
+   Apple 風格（DESIGN.md，`npx getdesign@latest add apple`）
+   疊在 Bootstrap 和 globals.css 之上：
+   - 一個強調色：Action Blue #0066cc；其他都是黑、白、淺灰（#f5f5f7）
+   - 系統字型（Mac / iPhone 上是 SF Pro、蘋方），內文 15–17px
+   - 卡片白底、18px 圓角、極淡的框線，不加陰影；層次靠底色差異
+   - 按鈕：主要動作是藍色膠囊，其他是外框膠囊；按下去縮一點（scale 0.97）
+   - 側邊欄是黑色半透明
+   報價單、檢測表的 A4（.qdoc）不受影響（給客人的格式固定）。
+   ========================================================================== */
+:root {
+  --apple-blue: #0066cc;
+  --apple-blue-focus: #0071e3;
+  --apple-ink: #1d1d1f;
+  --apple-muted: #6e6e73;
+  --apple-parchment: #f5f5f7;
+  --apple-hairline: rgba(0, 0, 0, 0.08);
+  --apple-hairline-strong: #d2d2d7;
+
+  /* 原本的變數改指到 Apple 的色票，舊樣式也一起跟著換 */
+  --primary: var(--apple-blue);
+  --primary-light: #4a90d9;
+  --accent: var(--apple-ink);
+  --bg: var(--apple-parchment);
+  --text: var(--apple-ink);
+  --text-secondary: var(--apple-muted);
+  --text-muted: #86868b;
+  --border: var(--apple-hairline-strong);
+  --border-light: #ececf0;
+  --success: #248a3d;
+  --warning: #b25000;
+  --danger: #d70015;
+  --shadow: none;
+  --shadow-hover: none;
+
+  --bs-primary: #0066cc;
+  --bs-primary-rgb: 0, 102, 204;
+  --bs-link-color: #0066cc;
+  --bs-link-color-rgb: 0, 102, 204;
+  --bs-link-hover-color: #0071e3;
+  --bs-body-color: #1d1d1f;
+  --bs-body-bg: #f5f5f7;
+  --bs-border-color: #d2d2d7;
+  --bs-border-radius: 11px;
+  --bs-border-radius-sm: 8px;
+  --bs-border-radius-lg: 18px;
+  --bs-body-font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro TC', 'PingFang TC', 'Helvetica Neue', 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+}
+
+body {
+  font-family: var(--bs-body-font-family);
+  background: var(--apple-parchment);
+  color: var(--apple-ink);
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4, h5, h6, .fw-bold { color: var(--apple-ink); }
+h5, h6 { letter-spacing: -0.015em; }
+a { color: var(--apple-blue); }
+.text-muted, .text-secondary { color: var(--apple-muted) !important; }
+.text-primary { color: var(--apple-blue) !important; }
+
+/* ---------- 側邊欄：黑色半透明 ---------- */
+.sidebar {
+  background: rgba(0, 0, 0, 0.88) !important;
+  backdrop-filter: saturate(180%) blur(20px);
+}
+.sidebar-header { border-bottom-color: rgba(255, 255, 255, 0.08); }
+.sidebar-header h5 { font-weight: 600; letter-spacing: -0.01em; }
+.sidebar .nav-link { color: rgba(255, 255, 255, 0.72); border-radius: 10px; font-weight: 400; font-size: 0.92rem; }
+.sidebar .nav-link:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.sidebar .nav-link.active { color: #fff; background: rgba(255, 255, 255, 0.16); font-weight: 600; }
+.sidebar .btn-outline-light { border-radius: 980px; border-color: rgba(255, 255, 255, 0.3); }
+
+/* ---------- 上方標題列：毛玻璃 ---------- */
+.top-bar {
+  background: rgba(245, 245, 247, 0.8) !important;
+  backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--apple-hairline) !important;
+}
+.top-bar h5 { font-weight: 600; font-size: 1.15rem; letter-spacing: -0.02em; }
+
+/* ---------- 卡片：白底、18px 圓角、淡框線、不加陰影 ---------- */
+.stat-card, .form-section, .table-container, .chart-container, .taiwan-map-container,
+.inv-cat-bar, .card, .inv-sidebar {
+  background: #fff;
+  border: 1px solid var(--apple-hairline) !important;
+  border-radius: 18px !important;
+  box-shadow: none !important;
+}
+.stat-card::before { display: none; }
+.stat-card:hover { transform: none; box-shadow: none; }
+.stat-card .stat-icon { border-radius: 12px; }
+.stat-card .stat-value { font-weight: 600; letter-spacing: -0.03em; }
+.stat-card .stat-label { text-transform: none; letter-spacing: 0; font-size: 0.8rem; color: var(--apple-muted); }
+.card-body { border-radius: 18px; }
+
+/* ---------- 表格 ---------- */
+.table { --bs-table-bg: transparent; color: var(--apple-ink); }
+.table th {
+  background: transparent; text-transform: none; letter-spacing: 0;
+  font-size: 0.78rem; font-weight: 600; color: var(--apple-muted);
+  border-bottom: 1px solid var(--apple-hairline-strong);
+}
+.table td { border-color: #ececf0; font-size: 0.9rem; }
+.table-hover tbody tr:hover, .table-hover > tbody > tr:hover > * { background: #f5f5f7; --bs-table-bg-state: #f5f5f7; }
+
+/* ---------- 按鈕：主要動作是藍色膠囊 ---------- */
+.btn {
+  border-radius: 980px; font-weight: 400; letter-spacing: -0.01em;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.1s ease;
+  box-shadow: none !important;
+}
+.btn:active { transform: scale(0.97); }
+.btn:focus-visible { outline: 2px solid var(--apple-blue-focus); outline-offset: 2px; }
+.btn-sm { border-radius: 980px; padding: 4px 12px; }
+.btn-primary {
+  --bs-btn-bg: #0066cc; --bs-btn-border-color: #0066cc;
+  --bs-btn-hover-bg: #0071e3; --bs-btn-hover-border-color: #0071e3;
+  --bs-btn-active-bg: #0058b0; --bs-btn-active-border-color: #0058b0;
+  --bs-btn-disabled-bg: #0066cc; --bs-btn-disabled-border-color: #0066cc;
+  background: #0066cc; border: 1px solid #0066cc;
+}
+.btn-primary:hover { transform: none; background: #0071e3; box-shadow: none; }
+.btn-outline-primary {
+  --bs-btn-color: #0066cc; --bs-btn-border-color: #0066cc;
+  --bs-btn-hover-bg: #0066cc; --bs-btn-hover-border-color: #0066cc; --bs-btn-hover-color: #fff;
+}
+.btn-secondary {
+  --bs-btn-bg: #e8e8ed; --bs-btn-border-color: #e8e8ed; --bs-btn-color: #1d1d1f;
+  --bs-btn-hover-bg: #dcdce1; --bs-btn-hover-border-color: #dcdce1; --bs-btn-hover-color: #1d1d1f;
+  --bs-btn-active-bg: #d2d2d7; --bs-btn-active-color: #1d1d1f;
+}
+.btn-outline-secondary {
+  --bs-btn-color: #1d1d1f; --bs-btn-border-color: #d2d2d7;
+  --bs-btn-hover-bg: #f5f5f7; --bs-btn-hover-border-color: #d2d2d7; --bs-btn-hover-color: #1d1d1f;
+  --bs-btn-active-bg: #e8e8ed; --bs-btn-active-color: #1d1d1f;
+}
+.btn-outline-danger { --bs-btn-color: #d70015; --bs-btn-border-color: #f2c2c6; --bs-btn-hover-bg: #d70015; --bs-btn-hover-border-color: #d70015; }
+.btn-danger { --bs-btn-bg: #d70015; --bs-btn-border-color: #d70015; --bs-btn-hover-bg: #b80012; --bs-btn-hover-border-color: #b80012; }
+.btn-outline-success { --bs-btn-color: #248a3d; --bs-btn-border-color: #bfe3c8; --bs-btn-hover-bg: #248a3d; --bs-btn-hover-border-color: #248a3d; }
+.btn-success { --bs-btn-bg: #248a3d; --bs-btn-border-color: #248a3d; --bs-btn-hover-bg: #1f7a35; --bs-btn-hover-border-color: #1f7a35; }
+.btn-warning, .btn-outline-warning {
+  --bs-btn-bg: #fff4e5; --bs-btn-border-color: #ffd8a8; --bs-btn-color: #b25000;
+  --bs-btn-hover-bg: #ffe8cc; --bs-btn-hover-border-color: #ffc078; --bs-btn-hover-color: #b25000;
+}
+.btn-outline-warning { --bs-btn-bg: transparent; }
+.btn-outline-info { --bs-btn-color: #0066cc; --bs-btn-border-color: #b3d4f5; --bs-btn-hover-bg: #0066cc; --bs-btn-hover-border-color: #0066cc; --bs-btn-hover-color: #fff; }
+.btn-link { color: var(--apple-blue); text-decoration: none; }
+
+/* ---------- 輸入框 ---------- */
+.form-control, .form-select {
+  border-radius: 11px; border-color: var(--apple-hairline-strong); background-color: #fff;
+  font-size: 0.95rem; padding: 0.5rem 0.85rem;
+}
+.form-control-sm, .form-select-sm { border-radius: 8px; font-size: 0.85rem; padding: 0.3rem 0.6rem; }
+.form-select, .form-select-sm { padding-right: 2.1rem; background-position: right 0.65rem center; }
+.form-control:focus, .form-select:focus {
+  border-color: var(--apple-blue-focus);
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.2);
+}
+.form-label { font-size: 0.82rem; font-weight: 600; color: var(--apple-muted); margin-bottom: 4px; }
+.form-check-input:checked { background-color: var(--apple-blue); border-color: var(--apple-blue); }
+.input-group-text { border-color: var(--apple-hairline-strong); background: var(--apple-parchment); border-radius: 11px; }
+
+/* ---------- 對話框 ---------- */
+.modal-content { border-radius: 18px; border: none; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18); }
+.modal-header { border-bottom: 1px solid var(--apple-hairline); padding: 18px 24px; }
+.modal-title { font-weight: 600; letter-spacing: -0.02em; }
+.modal-footer { border-top: 1px solid var(--apple-hairline); }
+.modal-backdrop.show { opacity: 0.35; }
+
+/* ---------- 標籤 / 徽章 ---------- */
+.badge { border-radius: 980px; font-weight: 500; padding: 0.35em 0.75em; letter-spacing: 0; }
+.badge-draft { background: #f2f2f4; color: #6e6e73; }
+.badge-deposit { background: #fff4e5; color: #b25000; }
+.badge-pending { background: #e8f1fb; color: #0066cc; }
+.badge-completed { background: #e8f6ec; color: #248a3d; }
+.badge-cancelled { background: #fdecee; color: #d70015; }
+.bg-light { background-color: #f2f2f4 !important; }
+
+/* ---------- 庫存分類列、樹狀分類：膠囊 ---------- */
+.inv-cat-tab, .inv-cat-sub-tab { border-radius: 980px; }
+.inv-cat-tab.active { background: var(--apple-ink); }
+.inv-tree-item.active { border-left-color: var(--apple-blue); background: #f5f5f7; }
+.inv-tree-item.active .inv-tree-label i { color: var(--apple-blue); }
+.cat-node-header { border-radius: 11px; }
+.cat-node.drag-over-top { border-top-color: var(--apple-blue); }
+.cat-node.drag-over-bottom { border-bottom-color: var(--apple-blue); }
+
+/* ---------- 分頁、分頁籤、提示 ---------- */
+.pagination .page-link { border-radius: 980px !important; margin: 0 2px; border-color: transparent; color: var(--apple-ink); }
+.pagination .page-item.active .page-link { background: var(--apple-ink); border-color: var(--apple-ink); }
+.nav-tabs { border-bottom-color: var(--apple-hairline-strong); }
+.nav-tabs .nav-link { border: none; color: var(--apple-muted); border-radius: 0; }
+.nav-tabs .nav-link.active { color: var(--apple-ink); background: transparent; box-shadow: inset 0 -2px 0 var(--apple-ink); font-weight: 600; }
+.alert { border-radius: 14px; border: none; }
+.alert-success { background: #e8f6ec; color: #1f6e33; }
+.alert-danger { background: #fdecee; color: #b00012; }
+.alert-warning { background: #fff4e5; color: #8a4500; }
+.alert-info { background: #e8f1fb; color: #004f9e; }
+
+/* ---------- 其他 ---------- */
+.split-divider:hover .split-divider-line { background: var(--apple-blue); }
+::-webkit-scrollbar-thumb { background: #c7c7cc; }
+.qdoc-scroll { background: #e8e8ed; border-radius: 18px; }
+
+/* ============ RWD ============ */
+/* flex 子元素預設 min-width:auto，會被寬表格撐開整頁 */
+.main-content { min-width: 0; }
+/* 庫存的統計列：窄的時候換行，不要擠成一字一行 */
+.d-flex:has(> .stat-pill) { flex-wrap: wrap; row-gap: 6px !important; }
+.stat-pill { white-space: nowrap; }
+/* 表格太寬就在卡片裡橫向捲動，不截掉 */
+.table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+@media (max-width: 991px) {
+  .table td, .table th { white-space: nowrap; }
+}
+@media (max-width: 767px) {
+  /* 工具列（篩選、搜尋、按鈕）可以換行，搜尋框吃滿 */
+  .main-content .d-flex.flex-wrap > .d-flex:has(> select) { flex-wrap: wrap; }
+  .main-content .d-flex.flex-wrap input.form-control { flex: 1 1 160px; min-width: 0; }
+  .stat-card, .form-section, .table-container, .chart-container, .card { border-radius: 14px; }
+  .modal-content { border-radius: 14px; }
+  .modal-footer { flex-wrap: wrap; gap: 6px; }
+  .modal-footer > .btn { flex: 1 1 auto; }
+  .btn { min-height: 36px; }
+  .btn-sm { min-height: 32px; }
+  .nav-tabs { flex-wrap: nowrap; overflow-x: auto; }
+  /* 分類樹：手機縮排變窄、按鈕變小，深層也放得下 */
+  .cat-node-header { --cat-indent: 6px; padding-right: 4px; gap: 6px; }
+  .cat-node-children { margin-left: 10px; }
+  .cat-node-header .d-flex.gap-2 { min-width: 0; gap: 6px !important; }
+  .cat-node-header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cat-node-header .btn-sm { min-height: 30px; padding: 2px 8px; }
+  .nav-tabs .nav-link { white-space: nowrap; }
+}
+@media (max-width: 575px) {
+  .modal-dialog { margin: 0; max-width: 100%; min-height: 100%; }
+  .modal-content { border-radius: 0; min-height: 100vh; border: 0; }
+  .qdoc-scroll { padding: 8px; }
+}
