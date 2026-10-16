@@ -44,8 +44,12 @@ function isCrossSiteWrite(request: globalThis.Request, url: URL): boolean {
   if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return false;
   if (request.headers.get('Sec-Fetch-Site') === 'cross-site') return true;
   const origin = request.headers.get('Origin');
-  return !!origin && origin !== url.origin;
+  if (!origin || origin === url.origin) return false;
+  // 本機開發：前端開發伺服器（另一個 port）把 /api 代理過來，Origin 是 localhost:5173 之類的，不算跨站
+  return !(isLocalhost(url.hostname) && isLocalhost(new URL(origin).hostname));
 }
+
+const isLocalhost = (host: string): boolean => host === 'localhost' || host === '127.0.0.1';
 
 async function readBody(request: globalThis.Request): Promise<any> {
   const type = request.headers.get('Content-Type') || '';
