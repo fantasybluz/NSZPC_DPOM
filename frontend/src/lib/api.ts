@@ -21,7 +21,7 @@ export function clearAuth() {
 
 /** API 回的錯誤（帶 HTTP 狀態，403 = 還沒開通 / 停用） */
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly details?: string[]) {
     super(message);
   }
 }
@@ -43,7 +43,7 @@ async function handle<T>(res: Response, fallback: string): Promise<T> {
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: fallback }));
-    throw new ApiError(err.error || fallback, res.status);
+    throw new ApiError(err.error || fallback, res.status, Array.isArray(err.details) ? err.details : undefined);
   }
   return res.json();
 }

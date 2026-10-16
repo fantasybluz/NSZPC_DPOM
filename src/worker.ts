@@ -9,6 +9,7 @@ import customersRouter from './routes/customers';
 import settingsRouter from './routes/settings';
 import purchasesRouter from './routes/purchases';
 import reportsRouter from './routes/reports';
+import publishRouter from './routes/publish';
 
 const APP_VERSION = '2.0.0';
 
@@ -17,6 +18,8 @@ const mounts: [string, Handler[], Router][] = [
   ['/api/auth', [], authRouter],
   ['/api/inventory', [authMiddleware], inventoryRouter],
   ['/api/quotations', [authMiddleware], quotationsRouter],
+  // 發布到官網（/api/quotations/:id/publish…），沒對到的路徑 quotationsRouter 會往下交給它
+  ['/api/quotations', [authMiddleware], publishRouter],
   ['/api/customers', [authMiddleware], customersRouter],
   ['/api/purchases', [authMiddleware], purchasesRouter],
   ['/api/reports', [authMiddleware], reportsRouter],

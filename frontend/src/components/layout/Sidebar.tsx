@@ -7,6 +7,9 @@ import { useAuth } from '@/contexts/AuthContext';
 import { NAV_ITEMS } from '@/lib/constants';
 import { api } from '@/lib/api';
 
+// 換網域時改這裡
+const WEBSITE_ADMIN_URL = 'https://nszpc.bluz.dev/admin';
+
 interface SidebarProps {
   open: boolean;
   onClose: () => void;
@@ -50,6 +53,12 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             </Link>
           ))}
         </div>
+
+        {/* 官網（NSZ_PC）的後台：推薦配單、文章、網站內容；出機紀錄從訂單「發布到官網」 */}
+        <a className="nav-link" href={WEBSITE_ADMIN_URL} target="_blank" rel="noopener noreferrer">
+          <i className="bi bi-globe" />
+          <span>官網後台</span>
+        </a>
 
         <div className="mt-auto p-3 border-top border-secondary border-opacity-25">
           <div className="d-flex justify-content-between align-items-center mb-2">

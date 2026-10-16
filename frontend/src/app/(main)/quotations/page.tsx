@@ -7,6 +7,7 @@ import Modal from '@/components/ui/Modal';
 import PaginationComp from '@/components/ui/Pagination';
 import * as Fmt from '@/lib/format';
 import QuoteDocModal, { type QuoteDocData } from '@/components/QuoteDocModal';
+import PublishModal from '@/components/PublishModal';
 
 // ===== Constants =====
 
@@ -107,6 +108,9 @@ export default function QuotationsPage() {
 
   // 產出報價單（A4 預覽、PDF / JPG / 貼 LINE 的圖片）
   const [quoteDoc, setQuoteDoc] = useState<QuoteDocData | null>(null);
+  // 發布到官網（變成 NSZ_PC 的出機紀錄）
+  const [publishId, setPublishId] = useState<number | null>(null);
+  const closePublish = useCallback(() => setPublishId(null), []);
 
   // Detail modal
   const [detailOpen, setDetailOpen] = useState(false);
@@ -744,6 +748,7 @@ export default function QuotationsPage() {
                       <button className="btn btn-sm btn-outline-secondary ms-1" onClick={() => editQuotation(q.id)} title="編輯"><i className="bi bi-pencil" /></button>
                       <button className="btn btn-sm btn-outline-success ms-1" onClick={() => exportQuotation(q.id)} title="產出報價單"><i className="bi bi-file-earmark-text" /></button>
                       <button className="btn btn-sm btn-outline-warning ms-1" onClick={() => exportQC(q.id)} title="出機檢查單"><i className="bi bi-clipboard-check" /></button>
+                      <button className="btn btn-sm btn-outline-success ms-1" onClick={() => setPublishId(q.id)} title="發布到官網"><i className="bi bi-globe" /></button>
                       <button className="btn btn-sm btn-outline-info ms-1" onClick={() => copyQuotation(q.id)} title="複製訂單"><i className="bi bi-copy" /></button>
                       <button className="btn btn-sm btn-outline-danger ms-1" onClick={() => confirmDelete(q.id)} title="刪除"><i className="bi bi-trash" /></button>
                     </td>
@@ -760,13 +765,19 @@ export default function QuotationsPage() {
 
       {/* ===== Detail Modal ===== */}
       <QuoteDocModal data={quoteDoc} onClose={() => setQuoteDoc(null)} />
+      <PublishModal quotationId={publishId} onClose={closePublish} />
 
       <Modal show={detailOpen} onClose={() => setDetailOpen(false)} title={detail ? `訂單${detail.quotation_no}` : ''} size="lg"
         footer={<>
           {detail && (
-            <button className="btn btn-primary" onClick={() => { setDetailOpen(false); exportQuotation(detail.id); }}>
-              <i className="bi bi-file-earmark-text" /> 產出報價單
-            </button>
+            <>
+              <button className="btn btn-outline-success" onClick={() => { setDetailOpen(false); setPublishId(detail.id); }}>
+                <i className="bi bi-globe" /> 發布到官網
+              </button>
+              <button className="btn btn-primary" onClick={() => { setDetailOpen(false); exportQuotation(detail.id); }}>
+                <i className="bi bi-file-earmark-text" /> 產出報價單
+              </button>
+            </>
           )}
           <button className="btn btn-secondary" onClick={() => setDetailOpen(false)}>關閉</button>
         </>}>
