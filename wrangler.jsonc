@@ -19,7 +19,7 @@
   "vars": {
     "ACCESS_TEAM_DOMAIN": "old-fog-9482.cloudflareaccess.com",
     // Access 應用的 Application Audience (AUD) Tag；沒設的話 API 一律拒絕
-    "ACCESS_AUD": "",
+    "ACCESS_AUD": "0566db847df16640336db9562eab86d59189896ccdd085712f69a589ba689dc8",
     // 第一次登入時自動建成管理員的 email（之後由管理員在「使用者管理」加人）
     "BOOTSTRAP_ADMIN_EMAILS": "fantasybluz@gmail.com,bluzstudio2020@gmail.com"
   },
