@@ -1,6 +1,6 @@
 # 星辰電腦 NSZPC 管理系統
 
-內網使用的星辰電腦管理系統，涵蓋庫存管理、訂單管理、盤商報價提取、客戶關係管理、社群追蹤等功能。
+內網使用的星辰電腦管理系統，涵蓋庫存管理、訂單管理、叫貨與結款、客戶關係管理、社群追蹤等功能。
 
 ## 系統架構
 
@@ -39,12 +39,11 @@ graph LR
 | 登入 | Cloudflare Access |
 | 前端 | Next.js（靜態輸出）+ Bootstrap 5 |
 | 圖表 | Chart.js |
-| OCR | Tesseract.js（前端，從 cdn.jsdelivr.net 載入） |
 
 ### D1 的限制（改程式時要注意）
 
 - **免費方案每個請求最多 50 個查詢**（batch 裡每一句都算），一句 SQL 最多 100 個參數
-  - 多筆寫入用 `json_each(?)` 一句寫完（例如報價單明細、盤商報價、叫貨明細），不要一筆一個查詢
+  - 多筆寫入用 `json_each(?)` 一句寫完（例如報價單明細、叫貨明細），不要一筆一個查詢
   - 分類一次讀全部、在記憶體算路徑和子分類（`loadCategories`、`categoryPath`、`descendantIds`）
   - 扣庫存、還原庫存先把要動的資料一次讀出來，在 JS 算好，再用一個 batch（同一個交易）寫回去
 - SQL 用 pg 的寫法也可以：`pool.query` 會把 `$1` 換成 `?1`、`NOW()` 換成 ISO 時間。PostgreSQL 專用的語法
@@ -237,14 +236,6 @@ erDiagram
     suppliers ||--o{ settlements : "supplier_id"
 
     %% ===== 獨立資料表 =====
-    supplier_prices {
-        int id PK
-        varchar supplier_name
-        varchar product_name
-        decimal price
-        text source_text
-        date quote_date
-    }
     settings {
         varchar key PK
         text value
@@ -276,7 +267,6 @@ erDiagram
 | **進貨** | `suppliers` | 盤商設定 (結款方式/稅別) |
 | | `purchase_orders` / `_items` | 叫貨訂單與明細 |
 | | `settlements` | 對帳結款紀錄 |
-| | `supplier_prices` | 歷史報價 (Line/OCR 解析) |
 | **售後** | `warranties` | 保固管理，關聯訂單+客戶 |
 | | `repair_orders` | 維修工單 |
 | | `repair_logs` | 維修進度紀錄 |
@@ -305,13 +295,6 @@ erDiagram
 - **匯出訂單**：自訂有效天數、自動帶入客戶物流資訊
 - **出機檢查單**：完整 QC 表格匯出（OS/BIOS、OCCT、R23、AIDA64+FURMARK 等）
 - **成交自動建檔**：訂單成交時自動將客戶新增至客戶管理
-
-### 3. 盤商報價提取
-- **Line 訊息解析**：貼上報價訊息自動提取品名與價格
-- **圖片 OCR**：上傳報價單截圖或 Ctrl+V 貼上，自動辨識（Tesseract.js）
-- **盤商下拉選單**：自定義盤商清單 + 歷史紀錄自動合併
-- **報價日期**：每筆報價記錄日期，按月份分組顯示
-- 歷史報價紀錄查詢與篩選
 
 ### 4. 客戶關係管理
 - 客戶來源追蹤：YouTube、Instagram、Line、門市、朋友介紹
@@ -406,7 +389,6 @@ Cloudflare 後台 › Zero Trust › Access › Applications：
 │       ├── inventory.ts       # 庫存 + 分類 + 進出貨
 │       ├── quotations.ts      # 訂單管理 + 圖片（R2）
 │       ├── customers.ts       # 客戶管理
-│       ├── suppliers.ts       # 盤商報價 + OCR 解析
 │       ├── purchases.ts       # 叫貨訂單 + 結款管理
 │       ├── reports.ts         # 報表 + 保固 + 維修 + 匯出
 │       └── settings.ts        # 設定 + IG 爬蟲

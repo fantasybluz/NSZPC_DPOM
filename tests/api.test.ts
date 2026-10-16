@@ -104,21 +104,50 @@ describe('Categories API', () => {
     assert.deepEqual(amd.children.map((c: any) => c.name), ['AM4', 'AM5']);
   });
 
-  it('拖拉排序（原本會被 /categories/:id 攔走）', async () => {
-    const created = await request('POST', '/api/inventory/categories', { name: `排序測試-${unique}` });
-    const other = await request('POST', '/api/inventory/categories', { name: `排序測試B-${unique}` });
+  it('拖拉只在同一層排序（原本會被 /categories/:id 攔走）', async () => {
+    const a = await request('POST', '/api/inventory/categories', { name: `排序A-${unique}` });
+    const b = await request('POST', '/api/inventory/categories', { name: `排序B-${unique}` });
     const res = await request('PUT', '/api/inventory/categories/reorder', {
-      items: [{ id: other.body.id, sort_order: 1, parent_id: null }, { id: created.body.id, sort_order: 2, parent_id: other.body.id }],
+      items: [{ id: b.body.id, sort_order: 1 }, { id: a.body.id, sort_order: 2 }],
     });
     assert.equal(res.status, 200);
     const tree = await request('GET', '/api/inventory/categories');
-    const parent = tree.body.find((c: any) => c.id === other.body.id);
-    assert.equal(parent.sort_order, 1);
-    assert.equal(parent.children[0].id, created.body.id);
-    // 刪掉父分類，子分類一起刪
-    assert.equal((await request('DELETE', `/api/inventory/categories/${other.body.id}`)).status, 200);
-    const after = await request('GET', '/api/inventory/categories');
-    assert.ok(!JSON.stringify(after.body).includes(`排序測試-${unique}`));
+    assert.equal(tree.body.find((c: any) => c.id === b.body.id).sort_order, 1);
+    assert.equal(tree.body.find((c: any) => c.id === a.body.id).sort_order, 2);
+
+    // 不同層的不能一起排（也不會被改成子分類）
+    const cpu = tree.body.find((c: any) => c.name === 'CPU');
+    const mixed = await request('PUT', '/api/inventory/categories/reorder', {
+      items: [{ id: a.body.id, sort_order: 1 }, { id: cpu.children[0].id, sort_order: 2 }],
+    });
+    assert.equal(mixed.status, 400);
+    for (const id of [a.body.id, b.body.id]) await request('DELETE', `/api/inventory/categories/${id}`);
+  });
+
+  it('用編輯換上層分類（有檢查）', async () => {
+    const parent = await request('POST', '/api/inventory/categories', { name: `上層-${unique}` });
+    const child = await request('POST', '/api/inventory/categories', { name: `下層-${unique}` });
+    assert.equal((await request('PUT', `/api/inventory/categories/${child.body.id}`, { parent_id: parent.body.id })).status, 200);
+    let tree = await request('GET', '/api/inventory/categories');
+    assert.equal(tree.body.find((c: any) => c.id === parent.body.id).children[0].id, child.body.id);
+
+    // 不能移到自己底下
+    const cycle = await request('PUT', `/api/inventory/categories/${parent.body.id}`, { parent_id: child.body.id });
+    assert.equal(cycle.status, 400);
+
+    // 有庫存的分類不能當上層
+    const inv = await request('POST', '/api/inventory', { category_id: child.body.id, name: `放在下層-${unique}` });
+    const other = await request('POST', '/api/inventory/categories', { name: `別的-${unique}` });
+    const intoStocked = await request('PUT', `/api/inventory/categories/${other.body.id}`, { parent_id: child.body.id });
+    assert.equal(intoStocked.status, 400);
+    assert.match(intoStocked.body.error, /庫存/);
+
+    // 移回第一層
+    assert.equal((await request('PUT', `/api/inventory/categories/${other.body.id}`, { parent_id: null })).status, 200);
+    await request('DELETE', `/api/inventory/${inv.body.id}`);
+    for (const id of [other.body.id, parent.body.id]) await request('DELETE', `/api/inventory/categories/${id}`);
+    tree = await request('GET', '/api/inventory/categories');
+    assert.ok(!JSON.stringify(tree.body).includes(unique));
   });
 });
 
@@ -285,23 +314,6 @@ describe('Customers API', () => {
   it('更新、刪除', async () => {
     assert.equal((await request('PUT', `/api/customers/${custId}`, { name: '陳小明', source: 'Instagram', city: '新北市' })).status, 200);
     assert.equal((await request('DELETE', `/api/customers/${custId}`)).status, 200);
-  });
-});
-
-// ========== 盤商報價 ==========
-describe('Suppliers API', () => {
-  it('解析 Line 報價訊息（多筆一次寫入）', async () => {
-    const lines = Array.from({ length: 80 }, (_, i) => `測試商品${unique}-${i} $${1000 + i}`).join('\n');
-    const res = await request('POST', '/api/suppliers/parse', { supplier_name: '原價屋', text: lines });
-    assert.equal(res.status, 200);
-    assert.equal(res.body.count, 80);
-    const prices = await request('GET', `/api/suppliers/prices?search=${encodeURIComponent(unique)}`);
-    assert.equal(prices.body.length, 80);
-  });
-
-  it('解析多種格式報價', async () => {
-    const res = await request('POST', '/api/suppliers/parse', { text: 'i5-13400F NT$5,490\nB660M：3290\n海韻 650W 2890元' });
-    assert.ok(res.body.count >= 2);
   });
 });
 

@@ -10,7 +10,7 @@ const ALL_PAGES = [
   { id: 'dashboard', label: '儀表板' },
   { id: 'inventory', label: '庫存管理' },
   { id: 'quotations', label: '訂單管理' },
-  { id: 'suppliers', label: '盤商報價' },
+  { id: 'suppliers', label: '叫貨管理' },
   { id: 'purchases', label: '結款管理' },
   { id: 'reports', label: '報表/保固/維修' },
   { id: 'customers', label: '客戶管理' },

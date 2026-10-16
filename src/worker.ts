@@ -6,7 +6,6 @@ import authRouter, { authMiddleware } from './routes/auth';
 import inventoryRouter from './routes/inventory';
 import quotationsRouter, { serveUpload } from './routes/quotations';
 import customersRouter from './routes/customers';
-import suppliersRouter from './routes/suppliers';
 import settingsRouter from './routes/settings';
 import purchasesRouter from './routes/purchases';
 import reportsRouter from './routes/reports';
@@ -19,7 +18,6 @@ const mounts: [string, Handler[], Router][] = [
   ['/api/inventory', [authMiddleware], inventoryRouter],
   ['/api/quotations', [authMiddleware], quotationsRouter],
   ['/api/customers', [authMiddleware], customersRouter],
-  ['/api/suppliers', [authMiddleware], suppliersRouter],
   ['/api/purchases', [authMiddleware], purchasesRouter],
   ['/api/reports', [authMiddleware], reportsRouter],
   ['/api/settings', [authMiddleware], settingsRouter],

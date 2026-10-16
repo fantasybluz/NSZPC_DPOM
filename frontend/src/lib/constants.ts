@@ -12,7 +12,6 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: '儀表板', icon: 'bi-speedometer2', href: '/dashboard' },
   { id: 'inventory', label: '庫存管理', icon: 'bi-box-seam', href: '/inventory' },
   { id: 'quotations', label: '訂單管理', icon: 'bi-receipt', href: '/quotations' },
-  { id: 'suppliers', label: '盤商報價', icon: 'bi-chat-left-text', href: '/suppliers' },
   { id: 'customers', label: '客戶管理', icon: 'bi-people', href: '/customers' },
   { id: 'suppliers', label: '叫貨管理', icon: 'bi-truck', href: '/purchases' },
   { id: 'dashboard', label: '報表/售後', icon: 'bi-graph-up', href: '/reports' },

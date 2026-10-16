@@ -31,10 +31,14 @@ export default function CategoriesPage() {
   const { isAdmin } = useAuth();
   const { showToast } = useToast();
 
-  // Drag state: top=插入上方, bottom=插入下方, middle=變成子分類
+  // 編輯時可以改上層分類（null = 第一層）
+  const [formParent, setFormParent] = useState<number | null>(null);
+
+  // 拖拉只在同一層排序：top = 放到目標上方，bottom = 放到目標下方。
+  // 要換上層分類請用「編輯」裡的「上層分類」（原本拖到一列中間會變成子分類，很容易不小心套進去）
   const dragItem = useRef<{ id: number; parentId: number | null } | null>(null);
   const [dragOverId, setDragOverId] = useState<number | null>(null);
-  const [dragPosition, setDragPosition] = useState<'top' | 'middle' | 'bottom' | null>(null);
+  const [dragPosition, setDragPosition] = useState<'top' | 'bottom' | null>(null);
 
   const loadTree = useCallback(async () => {
     try {
@@ -61,14 +65,29 @@ export default function CategoriesPage() {
 
   const openEdit = (cat: Category) => {
     setEditId(cat.id); setParentId(null); setFormName(cat.name); setFormIcon(cat.icon || '');
+    setFormParent(cat.parent_id);
     setModalTitle(`編輯: ${cat.name}`); setModalOpen(true);
   };
+
+  // 「上層分類」可以選的：所有分類，但不能是自己或自己底下的
+  const parentOptions = (() => {
+    const options: { id: number; label: string }[] = [];
+    const walk = (nodes: Category[], depth: number) => {
+      for (const n of nodes) {
+        if (n.id === editId) continue; // 自己和自己底下的都跳過
+        options.push({ id: n.id, label: `${'　'.repeat(depth)}${depth ? '└ ' : ''}${n.name}` });
+        if (n.children) walk(n.children, depth + 1);
+      }
+    };
+    walk(tree, 0);
+    return options;
+  })();
 
   const handleSave = async () => {
     if (!formName.trim()) { showToast('名稱必填', 'warning'); return; }
     try {
       if (editId) {
-        await api.put(`/inventory/categories/${editId}`, { name: formName, icon: formIcon });
+        await api.put(`/inventory/categories/${editId}`, { name: formName, icon: formIcon, parent_id: formParent });
         showToast('已更新');
       } else {
         const data: any = { name: formName, icon: formIcon };
@@ -102,62 +121,56 @@ export default function CategoriesPage() {
     });
   };
 
-  // ========== Drag & Drop ==========
-  // top/bottom = 插入目標的上方/下方（同層排序）
-  // middle = 變成目標的子分類
+  // ========== Drag & Drop（同層排序） ==========
 
-  // 遞迴檢查是否為某節點的子孫（防止拖到自己的子分類底下造成循環）
-  const isDescendant = (nodes: Category[], ancestorId: number, targetId: number): boolean => {
+  /** 同一層的分類（parentId = null 是第一層） */
+  const siblingsOf = (nodes: Category[], parentId: number | null): Category[] | null => {
+    if (parentId === null) return nodes;
     for (const n of nodes) {
-      if (n.id === ancestorId) {
-        const check = (children: Category[] | undefined): boolean => {
-          if (!children) return false;
-          for (const c of children) {
-            if (c.id === targetId) return true;
-            if (check(c.children)) return true;
-          }
-          return false;
-        };
-        return check(n.children);
+      if (n.id === parentId) return n.children ?? [];
+      if (n.children) {
+        const found = siblingsOf(n.children, parentId);
+        if (found) return found;
       }
-      if (n.children && isDescendant(n.children, ancestorId, targetId)) return true;
     }
-    return false;
+    return null;
+  };
+
+  /** 把同一層的 children 換成新順序 */
+  const replaceSiblings = (nodes: Category[], parentId: number | null, next: Category[]): Category[] => {
+    if (parentId === null) return next;
+    return nodes.map(n => {
+      if (n.id === parentId) return { ...n, children: next };
+      if (n.children) return { ...n, children: replaceSiblings(n.children, parentId, next) };
+      return n;
+    });
   };
 
   const handleDragStart = (e: React.DragEvent, node: Category) => {
+    e.stopPropagation(); // 拖子分類時不要連上層一起拖
     dragItem.current = { id: node.id, parentId: node.parent_id };
     e.dataTransfer.effectAllowed = 'move';
-    setTimeout(() => (e.target as HTMLElement).style.opacity = '0.4', 0);
+    const el = e.currentTarget as HTMLElement;
+    setTimeout(() => (el.style.opacity = '0.4'), 0);
   };
 
   const handleDragEnd = (e: React.DragEvent) => {
+    e.stopPropagation();
     (e.currentTarget as HTMLElement).style.opacity = '1';
     dragItem.current = null;
     setDragOverId(null);
     setDragPosition(null);
   };
 
+  // 只有同一層的分類可以放；位置只看那一列本身（不含展開的子分類），上半 = 放上方、下半 = 放下方
   const handleDragOver = (e: React.DragEvent, node: Category) => {
-    if (!dragItem.current) return;
-    if (dragItem.current.id === node.id) return;
-    // 不能拖到自己的子孫底下
-    if (isDescendant(tree, dragItem.current.id, node.id)) return;
-
+    const dragged = dragItem.current;
+    if (!dragged || dragged.id === node.id || dragged.parentId !== node.parent_id) return;
     e.preventDefault();
     e.stopPropagation();
-
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const h = rect.height;
-    const y = e.clientY - rect.top;
-    // 三區域: 上 25% = top, 中間 50% = middle, 下 25% = bottom
-    let pos: 'top' | 'middle' | 'bottom';
-    if (y < h * 0.25) pos = 'top';
-    else if (y > h * 0.75) pos = 'bottom';
-    else pos = 'middle';
-
     setDragOverId(node.id);
-    setDragPosition(pos);
+    setDragPosition(e.clientY - rect.top < rect.height / 2 ? 'top' : 'bottom');
   };
 
   const handleDragLeave = () => {
@@ -165,101 +178,32 @@ export default function CategoriesPage() {
     setDragPosition(null);
   };
 
-  // 從樹中移除某節點，回傳 [新樹, 被移除的節點]
-  const removeFromTree = (nodes: Category[], id: number): [Category[], Category | null] => {
-    let removed: Category | null = null;
-    const result = nodes.filter(n => {
-      if (n.id === id) { removed = n; return false; }
-      return true;
-    }).map(n => {
-      if (removed) return n; // 已經找到了
-      if (!n.children) return n;
-      const [newChildren, r] = removeFromTree(n.children, id);
-      if (r) removed = r;
-      return { ...n, children: newChildren.length > 0 ? newChildren : undefined };
-    });
-    return [result, removed];
-  };
-
-  // 在樹中的目標位置插入節點
-  const insertIntoTree = (
-    nodes: Category[],
-    targetId: number,
-    movedNode: Category,
-    position: 'top' | 'middle' | 'bottom'
-  ): Category[] => {
-    if (position === 'middle') {
-      // 變成目標的子分類
-      return nodes.map(n => {
-        if (n.id === targetId) {
-          const children = n.children ? [...n.children, { ...movedNode, parent_id: n.id, children: movedNode.children }] : [{ ...movedNode, parent_id: n.id, children: movedNode.children }];
-          return { ...n, children };
-        }
-        if (n.children) return { ...n, children: insertIntoTree(n.children, targetId, movedNode, position) };
-        return n;
-      });
-    }
-
-    // top/bottom: 插入同層
-    const result: Category[] = [];
-    for (const n of nodes) {
-      if (n.id === targetId) {
-        const inserted = { ...movedNode, parent_id: n.parent_id, children: movedNode.children };
-        if (position === 'top') { result.push(inserted); result.push(n); }
-        else { result.push(n); result.push(inserted); }
-      } else {
-        if (n.children) {
-          result.push({ ...n, children: insertIntoTree(n.children, targetId, movedNode, position) });
-        } else {
-          result.push(n);
-        }
-      }
-    }
-    return result;
-  };
-
   const handleDrop = async (e: React.DragEvent, targetNode: Category) => {
     e.preventDefault();
     e.stopPropagation();
-
     const pos = dragPosition;
+    const dragged = dragItem.current;
     setDragOverId(null);
     setDragPosition(null);
+    if (!dragged || !pos || dragged.id === targetNode.id || dragged.parentId !== targetNode.parent_id) return;
 
-    if (!dragItem.current || !pos) return;
-    if (dragItem.current.id === targetNode.id) return;
-    if (isDescendant(tree, dragItem.current.id, targetNode.id)) return;
-
-    // 1. 從樹中移除被拖的節點
-    const [treeWithout, moved] = removeFromTree(tree, dragItem.current.id);
+    const siblings = siblingsOf(tree, targetNode.parent_id);
+    if (!siblings) return;
+    const moved = siblings.find(n => n.id === dragged.id);
     if (!moved) return;
+    const without = siblings.filter(n => n.id !== dragged.id);
+    const targetIdx = without.findIndex(n => n.id === targetNode.id);
+    const next = [...without];
+    next.splice(pos === 'top' ? targetIdx : targetIdx + 1, 0, moved);
+    if (next.every((n, i) => n.id === siblings[i].id)) return; // 沒動
 
-    // 2. 插入到目標位置
-    const newTree = insertIntoTree(treeWithout, targetNode.id, moved, pos);
-    setTree(newTree);
-
-    // 3. 展開目標（如果是放到 middle）
-    if (pos === 'middle') {
-      setCollapsed(prev => {
-        const next = new Set(prev);
-        next.delete(targetNode.id);
-        return next;
-      });
-    }
-
-    // 4. 儲存到後端
-    const items: { id: number; sort_order: number; parent_id: number | null }[] = [];
-    const collect = (nodes: Category[], pid: number | null) => {
-      nodes.forEach((n, idx) => {
-        items.push({ id: n.id, sort_order: idx + 1, parent_id: pid });
-        if (n.children) collect(n.children, n.id);
-      });
-    };
-    collect(newTree, null);
-
+    setTree(replaceSiblings(tree, targetNode.parent_id, next));
     try {
-      await api.put('/inventory/categories/reorder', { items });
-      showToast(pos === 'middle' ? '已移至子分類' : '排序已更新');
+      // 只送這一層的新順序
+      await api.put('/inventory/categories/reorder', {
+        items: next.map((n, idx) => ({ id: n.id, sort_order: idx + 1 })),
+      });
+      showToast('排序已更新');
       loadTree();
     } catch (err: any) {
       showToast(err.message, 'danger');
@@ -278,15 +222,16 @@ export default function CategoriesPage() {
     return (
       <div
         key={node.id}
-        className={`cat-node ${isDragOver && dragPosition === 'top' ? 'drag-over-top' : ''} ${isDragOver && dragPosition === 'bottom' ? 'drag-over-bottom' : ''} ${isDragOver && dragPosition === 'middle' ? 'drag-over-middle' : ''}`}
+        className={`cat-node ${isDragOver && dragPosition === 'top' ? 'drag-over-top' : ''} ${isDragOver && dragPosition === 'bottom' ? 'drag-over-bottom' : ''}`}
         draggable
         onDragStart={e => handleDragStart(e, node)}
         onDragEnd={handleDragEnd}
-        onDragOver={e => handleDragOver(e, node)}
-        onDragLeave={handleDragLeave}
-        onDrop={e => handleDrop(e, node)}
       >
-        <div className="cat-node-header" style={{ paddingLeft: 12 + depth * 24 }}>
+        {/* 放的位置只看這一列（不含底下展開的子分類） */}
+        <div className="cat-node-header" style={{ paddingLeft: 12 + depth * 24 }}
+          onDragOver={e => handleDragOver(e, node)}
+          onDragLeave={handleDragLeave}
+          onDrop={e => handleDrop(e, node)}>
           <div className="d-flex align-items-center gap-2">
             <span className="cat-drag-handle"><i className="bi bi-grip-vertical" /></span>
             {hasChildren ? (
@@ -325,7 +270,7 @@ export default function CategoriesPage() {
               <h6 className="mb-0"><i className="bi bi-diagram-3" /> 商品分類管理</h6>
               <button className="btn btn-primary btn-sm" onClick={openAddRoot}><i className="bi bi-plus-lg" /> 新增主分類</button>
             </div>
-            <p className="text-muted small mb-3">拖曳 <i className="bi bi-grip-vertical" /> 可排序（同層級），點擊 <i className="bi bi-chevron-down" /> 展開/收合。</p>
+            <p className="text-muted small mb-3">拖曳 <i className="bi bi-grip-vertical" /> 可排序（只能在同一層），要移到別的分類底下請按 <i className="bi bi-pencil" /> 改「上層分類」。點擊 <i className="bi bi-chevron-down" /> 展開/收合。</p>
             <div>
               {tree.length === 0 ? (
                 <p className="text-muted text-center">尚無分類，點右上角新增</p>
@@ -345,6 +290,7 @@ export default function CategoriesPage() {
               <li>庫存只能歸在<strong>最末端分類</strong></li>
               <li>有庫存的分類無法刪除</li>
               <li>拖曳 <i className="bi bi-grip-vertical" /> 排序（僅同層級）</li>
+              <li>換上層分類：<i className="bi bi-pencil" /> 編輯 › 上層分類</li>
             </ul>
             <h6 className="mt-3"><i className="bi bi-bootstrap-icons" /> 可用圖示</h6>
             <div className="d-flex flex-wrap gap-2 small">
@@ -365,6 +311,16 @@ export default function CategoriesPage() {
           <label className="form-label">名稱 *</label>
           <input type="text" className="form-control" value={formName} onChange={e => setFormName(e.target.value)} placeholder="例: AMD、AM5、水冷" />
         </div>
+        {editId && (
+          <div className="mb-3">
+            <label className="form-label">上層分類</label>
+            <select className="form-select" value={formParent ?? ''} onChange={e => setFormParent(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">（第一層，沒有上層）</option>
+              {parentOptions.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+            <div className="form-text">底下的子分類會一起移過去；已經放了庫存的分類不能當上層。</div>
+          </div>
+        )}
         <div className="mb-3">
           <label className="form-label">圖示</label>
           <div className="input-group">

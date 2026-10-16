@@ -33,31 +33,63 @@ router.post('/categories', async (req: Request, res: Response) => {
 });
 
 // 拖拉排序：要放在 /categories/:id 前面（原本放在後面，PUT /categories/reorder 會被當成 id = reorder，排序一直存不進去）
+// 只改同一層的順序；要換上層分類用 PUT /categories/:id 的 parent_id（有檢查）
 router.put('/categories/reorder', async (req: Request, res: Response) => {
-  const { items } = req.body as { items: { id: number; sort_order: number; parent_id?: number | null }[] };
+  const { items } = req.body as { items: { id: number; sort_order: number }[] };
   if (!items?.length) return res.status(400).json({ error: '無排序資料' });
-  const rows = items.map((item) => ({ id: item.id, sort_order: item.sort_order, parent_id: item.parent_id ?? null }));
-  // 一句更新全部（一個交易）
+  const ids = JSON.stringify(items.map((item) => Number(item.id)));
+  const { rows: parents } = await pool.query(
+    'SELECT COUNT(*) AS found, COUNT(DISTINCT COALESCE(parent_id, 0)) AS levels FROM categories WHERE id IN (SELECT value FROM json_each($1))',
+    [ids]
+  );
+  if (parents[0].found !== items.length) return res.status(400).json({ error: '有分類不存在，請重新整理' });
+  if (parents[0].levels !== 1) return res.status(400).json({ error: '只能在同一層排序' });
   await pool.query(
-    `UPDATE categories SET
-       sort_order = (SELECT json_extract(j.value, '$.sort_order') FROM json_each($1) j WHERE json_extract(j.value, '$.id') = categories.id),
-       parent_id = (SELECT json_extract(j.value, '$.parent_id') FROM json_each($1) j WHERE json_extract(j.value, '$.id') = categories.id)
+    `UPDATE categories
+     SET sort_order = (SELECT json_extract(j.value, '$.sort_order') FROM json_each($1) j WHERE json_extract(j.value, '$.id') = categories.id)
      WHERE id IN (SELECT json_extract(value, '$.id') FROM json_each($1))`,
-    [JSON.stringify(rows)]
+    [JSON.stringify(items.map((item) => ({ id: Number(item.id), sort_order: Number(item.sort_order) })))]
   );
   res.json({ success: true });
 });
 
 router.put('/categories/:id', async (req: Request, res: Response) => {
+  const catId = parseInt(req.params.id as string);
   const { name, icon, sort_order } = req.body;
   const sets: string[] = []; const params: any[] = [];
   let idx = 1;
   if (name !== undefined) { sets.push(`name=$${idx++}`); params.push(name); }
   if (icon !== undefined) { sets.push(`icon=$${idx++}`); params.push(icon); }
   if (sort_order !== undefined) { sets.push(`sort_order=$${idx++}`); params.push(sort_order); }
-  if (!sets.length) return res.status(400).json({ error: '無更新欄位' });
-  params.push(req.params.id);
-  await pool.query(`UPDATE categories SET ${sets.join(',')} WHERE id=$${idx}`, params);
+
+  // 換上層分類（null = 第一層）
+  if (req.body.parent_id !== undefined) {
+    const all = await loadCategories();
+    const current = all.find((c) => c.id === catId);
+    if (!current) return res.status(404).json({ error: '找不到分類' });
+    const newParent = req.body.parent_id === null || req.body.parent_id === '' ? null : Number(req.body.parent_id);
+    if (newParent !== current.parent_id) {
+      if (newParent !== null) {
+        if (!all.some((c) => c.id === newParent)) return res.status(400).json({ error: '上層分類不存在' });
+        if (descendantIds(all, catId).includes(newParent)) return res.status(400).json({ error: '不能移到自己或自己底下的分類' });
+        const { rows: [used] } = await pool.query('SELECT COUNT(*) AS count FROM inventory WHERE category_id = $1', [newParent]);
+        if (used.count > 0) return res.status(400).json({ error: '這個分類已經有庫存，不能再放子分類（庫存只能歸在最末端分類）' });
+      }
+      // 放到新那一層的最後面
+      const siblings = all.filter((c) => c.parent_id === newParent);
+      sets.push(`parent_id=$${idx++}`, `sort_order=$${idx++}`);
+      params.push(newParent, siblings.reduce((max, c) => Math.max(max, c.sort_order), 0) + 1);
+    }
+  }
+
+  if (!sets.length) return res.json({ success: true });
+  params.push(catId);
+  try {
+    await pool.query(`UPDATE categories SET ${sets.join(',')} WHERE id=$${idx}`, params);
+  } catch (err) {
+    if (String(err).includes('UNIQUE')) return res.status(400).json({ error: '同一層已經有同名的分類' });
+    throw err;
+  }
   res.json({ success: true });
 });
 
