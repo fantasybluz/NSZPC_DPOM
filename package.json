@@ -8,7 +8,8 @@
     "build": "npm --prefix frontend run build",
     "typecheck": "tsc --noEmit",
     "test": "node --test --experimental-strip-types tests/*.test.ts",
-    "check": "npm run typecheck && npm run build",
+    "test:docs": "node --test --experimental-strip-types tests/docs.test.ts tests/version.test.ts",
+    "check": "npm run typecheck && npm run test:docs && npm run build",
     "deploy": "npm run check && wrangler d1 migrations apply nszpc-dpom --remote && wrangler deploy",
     "db:backup": "wrangler d1 export nszpc-dpom --remote --output backup.sql",
     "cf-typegen": "wrangler types"

@@ -4,9 +4,9 @@
 
 ## 流程
 
-1. 改好程式後：`npm test`（要先 `npm run dev`）、`npm run check`
+1. 改好程式後：`npm run check`（型別、文件測試、前端 build）、`npm test`（API 整合測試，要先 `npm run dev`）；文件要一起改（見 [docs/README.md](docs/README.md)）
 2. 平常改的東西先寫在 `CHANGELOG.md` 的「## 未發佈」底下（已經部署、還沒發版的會顯示成「下一版」）
-3. 要發版時：改 `VERSION`（例如 `3.5.0`），把「## 未發佈」那段的標題改成 `## 3.5.0`，上面再補一段空的「## 未發佈」
+3. 要發版時：改 `VERSION` 和 `package.json` 的 `version`（例如 `3.5.0`），把「## 未發佈」那段的標題改成 `## 3.5.0`，上面再補一段空的「## 未發佈」
 4. `npm run deploy`，commit、打標籤、推上去：
 
    ```bash

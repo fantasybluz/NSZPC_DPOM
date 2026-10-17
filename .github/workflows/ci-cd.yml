@@ -1,6 +1,6 @@
 name: CI
 
-# 部署到 Cloudflare 在本機跑 npm run deploy（見 README）；這裡只檢查型別和前端 build
+# 部署到 Cloudflare 在本機跑 npm run deploy（見 docs/setup.md）；這裡只跑 npm run check（型別、文件測試、前端 build）
 on:
   push:
     branches: [main, cloudflare]
