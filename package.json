@@ -1,6 +1,6 @@
 {
   "name": "nszpc-manager",
-  "version": "2.0.0",
+  "version": "3.4.0",
   "description": "星辰電腦 NSZPC 管理系統",
   "scripts": {
     "dev": "wrangler d1 migrations apply nszpc-dpom --local && wrangler dev --local-upstream localhost",

@@ -4,6 +4,8 @@
   "name": "nszpc-dpom",
   "main": "src/worker.ts",
   "compatibility_date": "2026-10-01",
+  // VERSION 當成文字打包進 Worker（/api/version 用；版號只寫在 VERSION 一個地方）
+  "rules": [{ "type": "Text", "globs": ["**/VERSION"], "fallthrough": true }],
   "assets": {
     "directory": "frontend/out",
     // Next.js 靜態輸出是 dashboard.html 這種檔名，/dashboard 會自動對到

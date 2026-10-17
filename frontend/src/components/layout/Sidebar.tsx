@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { NAV_ITEMS } from '@/lib/constants';
-import { api } from '@/lib/api';
+import { APP_VERSION, versionSeen } from '@/lib/version';
 
 // 換網域時改這裡
 const WEBSITE_ADMIN_URL = 'https://nszpc.bluz.dev/admin';
@@ -19,10 +19,8 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
   const pathname = usePathname();
   const { user, logout, hasPermission, isAdmin } = useAuth();
 
-  const [version, setVersion] = useState('');
-  useEffect(() => {
-    api.get('/version').then(res => setVersion(res.version || '')).catch(() => {});
-  }, []);
+  // 版號是建置時放進來的（VERSION）；有沒看過的新版就顯示 NEW
+  const unseen = useSyncExternalStore(versionSeen.subscribe, versionSeen.hasUnseen, versionSeen.serverSnapshot);
 
   const visibleItems = NAV_ITEMS.filter(item => {
     if (item.adminOnly && !isAdmin) return false;
@@ -71,9 +69,12 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
             <i className="bi bi-box-arrow-left me-1" />
             <span>登出</span>
           </button>
-          {version && (
+          {APP_VERSION && (
             <div className="text-center mt-2">
-              <small className="text-white-50" style={{ fontSize: '0.7rem' }}>v{version}</small>
+              <Link href="/changelog" className="sidebar-version" onClick={onClose} title="看更新紀錄">
+                v{APP_VERSION}
+                {unseen && <span className="sidebar-version-new">NEW</span>}
+              </Link>
             </div>
           )}
         </div>

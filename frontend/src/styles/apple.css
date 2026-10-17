@@ -307,3 +307,39 @@ a { color: var(--apple-blue); }
   font-size: 0.8rem;
   color: #6e6e73;
 }
+
+/* ============ 版號、更新紀錄（components/layout/Sidebar.tsx、app/(main)/changelog） ============ */
+.sidebar-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.55);
+  text-decoration: none;
+}
+.sidebar-version:hover { color: #fff; }
+.sidebar-version-new {
+  padding: 0 6px;
+  border-radius: 980px;
+  background: #0a84ff;
+  color: #fff;
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.changelog { max-width: 760px; }
+.changelog-current .changelog-version {
+  font-size: 2.6rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  margin: 2px 0 4px;
+}
+.changelog-section ul { padding-left: 1.2rem; }
+.changelog-section li { margin-bottom: 4px; line-height: 1.55; }
+.changelog > * + * { margin-top: 14px; }
+@media (max-width: 991px) and (min-width: 768px) {
+  /* 平板的側欄只剩圖示，版號太長就藏起來 */
+  .sidebar-version { font-size: 0; }
+  .sidebar-version-new { font-size: 0.6rem; }
+}

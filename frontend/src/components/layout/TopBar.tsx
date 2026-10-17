@@ -26,7 +26,8 @@ export default function TopBar({ onToggleSidebar }: TopBarProps) {
   }, []);
 
   const currentPage = NAV_ITEMS.find(item => item.href === pathname);
-  const title = currentPage?.label || '';
+  // 不在側欄選單裡的頁面（更新紀錄）另外給標題
+  const title = currentPage?.label || (pathname === '/changelog' ? '更新紀錄' : '');
 
   return (
     <div className="top-bar d-flex justify-content-between align-items-center px-4 py-2">

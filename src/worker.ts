@@ -1,5 +1,6 @@
 // Cloudflare Worker 入口：/api/* 走這裡，其他網址是前端（frontend/out，Next.js 靜態輸出）。
 // 整個網站在 Cloudflare Access 後面；/api 再由 routes/auth.ts 的 authMiddleware 驗 JWT、對到使用者。
+import versionFile from '../VERSION';
 import { Router, Response, runHandlers, type Handler, type Request } from './lib/router';
 import { useDatabase } from './models/database';
 import authRouter, { authMiddleware } from './routes/auth';
@@ -12,7 +13,8 @@ import reportsRouter from './routes/reports';
 import publishRouter from './routes/publish';
 import inspectionsRouter from './routes/inspections';
 
-const APP_VERSION = '2.0.0';
+// 版號只寫在根目錄的 VERSION（前端 next.config.ts 也讀它，見 RELEASING.md）
+const APP_VERSION = versionFile.trim();
 
 // 跟原本 server.ts 的 app.use 一樣：前綴 → middleware + router（同一個前綴可以有好幾個 router，依序比對）
 const mounts: [string, Handler[], Router[]][] = [
