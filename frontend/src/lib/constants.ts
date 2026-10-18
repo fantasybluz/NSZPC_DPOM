@@ -1,4 +1,6 @@
-export type PagePermission = 'dashboard' | 'inventory' | 'quotations' | 'suppliers' | 'customers' | 'youtube' | 'users' | 'categories';
+// 頁面權限：跟後端 src/types/auth.ts 的 PagePermission 同一組。後端只看「改資料」要不要這個權限
+// （讀取只要登入），側欄用它決定顯示哪些頁。categories、users 只有管理員能用。
+export type PagePermission = 'dashboard' | 'inventory' | 'quotations' | 'customers' | 'purchases' | 'reports' | 'social' | 'categories' | 'users';
 
 export interface NavItem {
   id: PagePermission;
@@ -13,12 +15,15 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'inventory', label: '庫存管理', icon: 'bi-box-seam', href: '/inventory' },
   { id: 'quotations', label: '訂單管理', icon: 'bi-receipt', href: '/quotations' },
   { id: 'customers', label: '客戶管理', icon: 'bi-people', href: '/customers' },
-  { id: 'suppliers', label: '叫貨管理', icon: 'bi-truck', href: '/purchases' },
-  { id: 'dashboard', label: '報表/售後', icon: 'bi-graph-up', href: '/reports' },
-  { id: 'youtube', label: '社群設定', icon: 'bi-youtube', href: '/social' },
+  { id: 'purchases', label: '叫貨管理', icon: 'bi-truck', href: '/purchases' },
+  { id: 'reports', label: '報表/售後', icon: 'bi-graph-up', href: '/reports' },
+  { id: 'social', label: '社群設定', icon: 'bi-youtube', href: '/social' },
   { id: 'categories', label: '分類管理', icon: 'bi-diagram-3', href: '/categories', adminOnly: true },
   { id: 'users', label: '權限管理', icon: 'bi-shield-lock', href: '/users', adminOnly: true },
 ];
+
+/** 「權限管理」可以勾給一般使用者的頁面（側欄上不是只有管理員的那些，名稱跟側欄一樣） */
+export const PERMISSION_OPTIONS = NAV_ITEMS.filter((item) => !item.adminOnly).map(({ id, label }) => ({ id, label }));
 
 export const STATUS_MAP: Record<string, { label: string; class: string }> = {
   draft: { label: '尚未成交', class: 'badge-draft' },

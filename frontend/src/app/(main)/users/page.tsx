@@ -5,18 +5,10 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import Modal from '@/components/ui/Modal';
+import { PERMISSION_OPTIONS } from '@/lib/constants';
 
-const ALL_PAGES = [
-  { id: 'dashboard', label: '儀表板' },
-  { id: 'inventory', label: '庫存管理' },
-  { id: 'quotations', label: '訂單管理' },
-  { id: 'suppliers', label: '叫貨管理' },
-  { id: 'purchases', label: '結款管理' },
-  { id: 'reports', label: '報表/保固/維修' },
-  { id: 'customers', label: '客戶管理' },
-  { id: 'youtube', label: '社群追蹤 / 設定' },
-  { id: 'categories', label: '分類管理' },
-];
+// 跟側欄同一組（lib/constants.ts）；分類管理、權限管理只有管理員能用，不用勾
+const ALL_PAGES: { id: string; label: string }[] = PERMISSION_OPTIONS;
 
 interface UserData {
   id: number;
@@ -177,7 +169,7 @@ export default function UsersPage() {
             </select>
           </div>
           <div className="col-12">
-            <label className="form-label">頁面權限 <span className="text-muted small">(管理員自動擁有全部權限)</span></label>
+            <label className="form-label">頁面權限 <span className="text-muted small">(管理員自動擁有全部權限；沒勾的頁面不會出現在側欄，也不能新增、修改、刪除那一頁的資料)</span></label>
             <div className="d-flex flex-wrap gap-3">
               {ALL_PAGES.map(p => (
                 <div className="form-check" key={p.id}>

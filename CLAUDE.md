@@ -36,6 +36,8 @@
 - SQL 可以用 pg 的寫法（`$1`、`NOW()`），但不能用 PostgreSQL 專用語法；「今天」「這個月」用台灣時間（`taipeiDate()`、`taipeiMonthSql()`），不要用 `new Date().toISOString()`
 - 路由照註冊順序比對：固定路徑（`/stats/xxx`、`/reorder`）寫在 `/:id` 前面
 - 只有管理員能做的事，後端掛 `adminOnly`（`src/routes/auth.ts`），不要只在前端藏按鈕
+- 頁面權限：寫入要權限、讀取只要登入（[ADR 0010](docs/decisions/0010-page-permissions-backend.md)）。新的 API 前綴在 `worker.ts` 的 `mounts` 掛 `writeRequires('權限')`；
+  新的設定 key 要加進 `settings.ts` 的 `WRITABLE_KEYS`；權限 id 前後端同一組（`src/types/auth.ts`、`frontend/src/lib/constants.ts`），改了要寫 migration 換掉 `users.permissions` 裡的舊 id
 - 庫存數量、平均成本只能透過批次改（`stockIn`、`stockOut`、`deductQuotationStock`、`restoreQuotationStock`），不要直接 `UPDATE inventory SET quantity`
 - 會改資料的請求只接受同網站送出的（`worker.ts` 的 `isCrossSiteWrite`）；上傳只收點陣圖，不收 SVG
 - 送到官網的資料不能有客人資料（姓名、電話、地址）、成本、服務費

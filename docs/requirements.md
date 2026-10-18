@@ -12,12 +12,21 @@
 - `BOOTSTRAP_ADMIN_EMAILS` 裡的 email 第一次登入自動變成管理員，之後由管理員加其他人
 - 角色：
   - **管理員**：全部頁面，加上分類管理、權限管理、YouTube 金鑰設定
-  - **一般使用者**：只看得到勾選的頁面。可以勾的：儀表板（也控制「報表/售後」）、庫存管理、訂單管理、叫貨管理、客戶管理、社群設定
+  - **一般使用者**：側欄只看得到勾選的頁面，**也只能改勾選的頁面的資料**（後端也擋，見下面）。
+    可以勾的（id 在括號裡，跟側欄同一組）：儀表板（`dashboard`）、庫存管理（`inventory`）、訂單管理（`quotations`）、客戶管理（`customers`）、
+    叫貨管理（`purchases`，含盤商、結款）、報表/售後（`reports`，含保固、維修）、社群設定（`social`）；
+    分類管理（`categories`）、權限管理（`users`）只有管理員
 - 管理員不能把自己降成一般使用者、停用自己、刪掉自己
 - 停用的帳號登入後看到「這個帳號已停用」
 - 登出：側欄的「登出」（Cloudflare Access 的登出）
 
-> 頁面權限目前只控制側欄，後端只擋「管理員才能做」的那幾件事（見 [architecture.md](architecture.md#登入cloudflare-access)）。
+- **權限怎麼擋**（後端，見 [architecture.md](architecture.md#登入cloudflare-access)）：
+  - **讀取**只要登入就可以：開訂單要讀客戶、庫存、分類，儀表板要讀各種統計
+  - **新增、修改、刪除**要有那一頁的權限，沒有回「你沒有「xxx」的權限…」；管理員都可以
+  - 例外：存訂單時順便建新客戶，有「訂單管理」或「客戶管理」都可以；報價單的店家資訊（`quote_doc`）跟著訂單管理；IG 帳號、數字跟著社群設定
+  - 設定只能改畫面上會改的那幾項（`quote_doc`、`ig_username`、IG 數字）；YouTube 金鑰、成本計算方式（`cost_method`）只有管理員
+- 2026-10 之前的權限 id 不一致（叫貨看 `suppliers`、報表/售後看 `dashboard`、社群看 `youtube`，權限管理頁另外有兩個沒作用的選項），
+  `migrations/0007_permissions.sql` 換成上面這組：`suppliers` → `purchases`、`youtube` → `social`、有 `dashboard` 的多給 `reports`，沒有人少了原本看得到的頁面
 
 ## 庫存
 

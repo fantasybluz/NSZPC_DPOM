@@ -12,14 +12,19 @@ Worker 提供的 API，全部在 `/api` 底下。前綴掛在 [`src/worker.ts`](
   少數新寫的（發布到官網、檢測表、YouTube）是 camelCase
 - 錯誤一律回 `{ "error": "給使用者看的訊息" }`，前端直接顯示。HTTP 狀態碼：
   - `400` 資料不對、`401` 沒登入或 Access 的 JWT 驗不過（前端會整頁重新整理，讓 Cloudflare 重新要求登入，一分鐘最多一次）
-  - `403` email 還沒開通、帳號停用、不是管理員、跨站請求
+  - `403` email 還沒開通、帳號停用、不是管理員、沒有那一頁的權限、跨站請求
   - `404` 找不到（也包括不存在的 API：`{ "error": "找不到這個 API" }`）
   - `422` 發布到官網時官網的欄位檢查沒過（多一個 `details` 陣列）
   - `500` 程式出錯（訊息是例外的 message）、`502` 連不到 YouTube、`503` `ACCESS_AUD` 沒設定
 - **登入**：除了 `GET /api/version`，每一支都先跑 [`authMiddleware`](../src/routes/auth.ts)（驗 Cloudflare Access 的 JWT、
   用 email 對到 `users`）。前綴底下的路徑對不到任何路由時，也是先驗登入再回 404
-- **權限**：標「管理員」的有 `adminOnly`，一般使用者回 403。**其他 API 只要登入就能用**，頁面權限（`users.permissions`）
-  只決定側欄顯示哪些頁，後端不檢查（見 [architecture.md](architecture.md#登入cloudflare-access)）
+- **權限**（見 [architecture.md](architecture.md#登入cloudflare-access)）：
+  - 標「管理員」的有 `adminOnly`，一般使用者回 403「權限不足：只有管理員可以做這件事」
+  - **讀取（GET）只要登入就能用**
+  - **寫入（POST、PUT、DELETE）要有那個前綴的頁面權限**（`users.permissions`，管理員都可以），沒有回 403「你沒有「xxx」的權限，不能修改資料…」：
+    `/api/inventory` → `inventory`、`/api/quotations` → `quotations`、`/api/customers` → `customers`（`POST /api/customers` 也接受 `quotations`）、
+    `/api/purchases` → `purchases`、`/api/reports` → `reports`；`/api/settings` 見各支 API
+  - 本機開發（localhost 而且有 `DEV_USER_EMAIL`）可以用 `X-Dev-User-Email` 標頭換成別的使用者，測試用
 - **CSRF**：POST、PUT、PATCH、DELETE 的 `Sec-Fetch-Site` 是 `cross-site`，或 `Origin` 不是自己網站（localhost 對 localhost 除外），回 403
 - 每個回應都有 `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy`、HSTS，沒指定的話 `Cache-Control: no-store`
 - 金額都是新台幣整數。時間欄位（`created_at` 等）是 UTC 的 ISO 字串；日期欄位（`batch_date`、`order_date`…）是 `YYYY-MM-DD`
@@ -36,7 +41,7 @@ Worker 提供的 API，全部在 `/api` 底下。前綴掛在 [`src/worker.ts`](
 ### `GET /api/auth/me`
 
 目前登入的人：`{ userId, email, username, displayName, role, permissions }`。`role` 是 `admin` 或 `user`，
-`permissions` 是頁面 id 的陣列。第一次登入、email 在 `BOOTSTRAP_ADMIN_EMAILS` 裡的會在這時自動建成管理員。
+`permissions` 是頁面 id 的陣列（`dashboard`、`inventory`、`quotations`、`customers`、`purchases`、`reports`、`social`、`categories`、`users`）。第一次登入、email 在 `BOOTSTRAP_ADMIN_EMAILS` 裡的會在這時自動建成管理員。
 email 不在 `users` 回 403「xxx 還沒開通…」，停用回 403「這個帳號已停用」。
 
 ### `GET /api/auth/users`
@@ -46,7 +51,7 @@ email 不在 `users` 回 403「xxx 還沒開通…」，停用回 403「這個�
 ### `POST /api/auth/users`
 
 管理員。`{ email, display_name, role, permissions }` → `{ id }`。email 要像 email（舊前端送 `username` 也收），
-已經有了回 400。`role` 預設 `user`。**這裡只開通系統帳號**，同一個 email 還要加進 Cloudflare Access 的允許清單（見 [setup.md](setup.md#加使用者)）。
+已經有了回 400。`role` 預設 `user`。`permissions` 存之前整理過：舊 id `suppliers`、`youtube` 換成 `purchases`、`social`，不認得的拿掉。**這裡只開通系統帳號**，同一個 email 還要加進 Cloudflare Access 的允許清單（見 [setup.md](setup.md#加使用者)）。
 
 ### `PUT /api/auth/users/:id`
 
@@ -410,7 +415,7 @@ Worker 去查 YouTube Data API（`channels?part=statistics,snippet`）：`{ conf
 
 ### `PUT /api/settings/instagram/manual`
 
-手動填 IG：`{ followers?, following?, posts? }`，同時把 `ig_last_fetch` 設成現在。
+要有 `social`（社群設定）權限。手動填 IG：`{ followers?, following?, posts? }`，同時把 `ig_last_fetch` 設成現在。
 
 ### `GET /api/settings/:key`
 
@@ -419,4 +424,13 @@ Worker 去查 YouTube Data API（`channels?part=statistics,snippet`）：`{ conf
 
 ### `PUT /api/settings/:key`
 
-`{ value }`，沒有就新增。`youtube_api_key` 回 403（要用 `PUT /api/settings/youtube`）。任何登入的人都能改任何 key。
+`{ value }`，沒有就新增。**只能改這幾個 key**，要有寫它的那一頁的權限（沒有回 403）：
+
+| key | 誰會寫 | 要的權限 |
+|---|---|---|
+| `quote_doc` | 訂單的「產出報價單」 | `quotations` |
+| `ig_username` | 社群設定 | `social` |
+| `cost_method` | 沒有畫面（`fifo`／`average`） | 管理員 |
+
+`youtube_api_key` 回 403（要用 `PUT /api/settings/youtube`）；其他 key 回 400「「key」這個設定不能從這裡改」
+（YouTube、IG 數字有自己的 API，`youtube_stats` 之類的是伺服器自己寫的）。

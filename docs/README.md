@@ -29,6 +29,7 @@ ADR：
 | [0007](decisions/0007-social-server-side.md) | YouTube 改由 Worker 查；IG 改手動；拿掉 LINE Notify |
 | [0008](decisions/0008-security.md) | 資安：CSRF、管理員權限後端也擋、上傳只收點陣圖 |
 | [0009](decisions/0009-versioning.md) | 版號：VERSION 單一來源、CHANGELOG.md |
+| [0010](decisions/0010-page-permissions-backend.md) | 頁面權限後端也擋：寫入要權限、讀取只要登入；權限 id 統一 |
 
 ## 維護規則
 

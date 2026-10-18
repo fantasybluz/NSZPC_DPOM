@@ -14,10 +14,10 @@ interface ApiResponse {
   headers: Headers;
 }
 
-async function request(method: string, path: string, body?: unknown): Promise<ApiResponse> {
+async function request(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<ApiResponse> {
   const res = await fetch(new URL(path, BASE_URL), {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
+    headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...headers },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -27,6 +27,10 @@ async function request(method: string, path: string, body?: unknown): Promise<Ap
 }
 
 const unique = `${Date.now()}`;
+
+/** 用別的使用者打 API：本機開發才有效的 X-Dev-User-Email（見 src/routes/auth.ts） */
+const asUser = (email: string) => (method: string, path: string, body?: unknown) =>
+  request(method, path, body, { 'X-Dev-User-Email': email });
 
 // ========== 登入 ==========
 describe('Auth API', () => {
@@ -90,6 +94,87 @@ describe('User Management', () => {
   it('刪除使用者', async () => {
     const res = await request('DELETE', `/api/auth/users/${testUserId}`);
     assert.equal(res.status, 200);
+  });
+});
+
+// ========== 頁面權限（後端也擋） ==========
+describe('頁面權限', () => {
+  const invOnly = `inv-only-${unique}@example.com`;
+  const quotOnly = `quot-only-${unique}@example.com`;
+  const socialOnly = `social-only-${unique}@example.com`;
+  const ids: number[] = [];
+
+  it('建立只有部分權限的使用者；舊的頁面 id 會換成新的', async () => {
+    for (const [email, permissions] of [[invOnly, ['inventory']], [quotOnly, ['quotations']], [socialOnly, ['youtube']]] as const) {
+      const res = await request('POST', '/api/auth/users', { email, role: 'user', permissions });
+      assert.equal(res.status, 200);
+      ids.push(res.body.id);
+    }
+    const me = await asUser(invOnly)('GET', '/api/auth/me');
+    assert.equal(me.body.role, 'user');
+    assert.deepEqual(me.body.permissions, ['inventory']);
+    assert.deepEqual((await asUser(socialOnly)('GET', '/api/auth/me')).body.permissions, ['social']);
+    // 沒開通的 email 進不來
+    assert.equal((await asUser(`nobody-${unique}@example.com`)('GET', '/api/auth/me')).status, 403);
+  });
+
+  it('讀取只要登入就可以（訂單畫面要讀客戶、庫存、分類）', async () => {
+    const api = asUser(invOnly);
+    for (const path of ['/api/customers', '/api/quotations', '/api/inventory/categories', '/api/purchases/orders', '/api/reports/notifications', '/api/quotations/stats/monthly']) {
+      assert.equal((await api('GET', path)).status, 200, path);
+    }
+  });
+
+  it('改資料要有那一頁的權限，沒有回 403', async () => {
+    const api = asUser(invOnly);
+    const inv = await api('POST', '/api/inventory', { category_id: 1, name: `權限測試${unique}` });
+    assert.equal(inv.status, 200);
+    assert.equal((await api('POST', `/api/inventory/${inv.body.id}/stock-in`, { quantity: 1, unit_cost: 10 })).status, 200);
+
+    const denied = await api('POST', '/api/customers', { name: `不該建立${unique}` });
+    assert.equal(denied.status, 403);
+    assert.match(denied.body.error, /客戶管理/);
+    assert.equal((await api('POST', '/api/quotations', { customer_name: `不該建立${unique}`, items: [] })).status, 403);
+    assert.equal((await api('POST', '/api/purchases/suppliers', { name: `不該建立${unique}` })).status, 403);
+    assert.equal((await api('POST', '/api/reports/repairs', { customer_name: `不該建立${unique}` })).status, 403);
+    assert.equal((await api('PUT', '/api/settings/instagram/manual', { followers: 1 })).status, 403);
+    assert.equal((await api('PUT', '/api/settings/ig_username', { value: 'x' })).status, 403);
+    assert.equal((await api('PUT', '/api/settings/quote_doc', { value: '{}' })).status, 403);
+    // 管理員才能做的
+    assert.equal((await api('POST', '/api/inventory/categories', { name: `不該建立${unique}` })).status, 403);
+    assert.equal((await api('PUT', '/api/settings/cost_method', { value: 'average' })).status, 403);
+    assert.equal((await api('GET', '/api/auth/users')).status, 403);
+    assert.ok(!(await request('GET', `/api/customers?search=${encodeURIComponent(`不該建立${unique}`)}`)).body.length);
+
+    assert.equal((await api('DELETE', `/api/inventory/${inv.body.id}`)).status, 200);
+  });
+
+  it('訂單管理：可以存單時順便建客戶、改報價單設定，不能改客戶資料', async () => {
+    const api = asUser(quotOnly);
+    const c = await api('POST', '/api/customers', { name: `訂單建的客戶${unique}` });
+    assert.equal(c.status, 200);
+    assert.equal((await api('PUT', `/api/customers/${c.body.id}`, { name: '改名' })).status, 403);
+    assert.equal((await api('DELETE', `/api/customers/${c.body.id}`)).status, 403);
+    const q = await api('POST', '/api/quotations', { customer_id: c.body.id, items: [] });
+    assert.equal(q.status, 200);
+
+    const quoteDoc = (await request('GET', '/api/settings/quote_doc')).body.value;
+    assert.equal((await api('PUT', '/api/settings/quote_doc', { value: quoteDoc })).status, 200);
+    assert.equal((await api('PUT', '/api/settings/ig_username', { value: 'x' })).status, 403);
+
+    assert.equal((await api('DELETE', `/api/quotations/${q.body.id}`)).status, 200);
+    await request('DELETE', `/api/customers/${c.body.id}`);
+  });
+
+  it('社群設定：可以改 IG，不能改 YouTube 金鑰（管理員）', async () => {
+    const api = asUser(socialOnly);
+    const original = (await request('GET', '/api/settings/ig_username')).body.value;
+    assert.equal((await api('PUT', '/api/settings/ig_username', { value: original })).status, 200);
+    assert.equal((await api('PUT', '/api/settings/youtube', { channelId: 'x' })).status, 403);
+  });
+
+  it('刪除測試使用者', async () => {
+    for (const id of ids) assert.equal((await request('DELETE', `/api/auth/users/${id}`)).status, 200);
   });
 });
 
@@ -689,10 +774,16 @@ describe('Reports API', () => {
 
 // ========== 設定 ==========
 describe('Settings API', () => {
-  it('設定值', async () => {
-    assert.equal((await request('PUT', '/api/settings/test_key', { value: 'test_value' })).status, 200);
-    assert.equal((await request('GET', '/api/settings/test_key')).body.value, 'test_value');
+  it('設定值：只能改畫面上會改的 key', async () => {
+    const original = (await request('GET', '/api/settings/ig_username')).body.value;
+    assert.equal((await request('PUT', '/api/settings/ig_username', { value: `test_${unique}` })).status, 200);
+    assert.equal((await request('GET', '/api/settings/ig_username')).body.value, `test_${unique}`);
+    await request('PUT', '/api/settings/ig_username', { value: original });
     assert.equal((await request('GET', '/api/settings/nonexistent')).body.value, '');
+    // 不認得的 key 管理員也不能改
+    const unknown = await request('PUT', '/api/settings/test_key', { value: 'x' });
+    assert.equal(unknown.status, 400);
+    assert.match(unknown.body.error, /不能從這裡改/);
   });
 
   it('成本方法', async () => {

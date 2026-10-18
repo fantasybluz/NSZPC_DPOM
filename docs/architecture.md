@@ -79,7 +79,7 @@ Cloudflare Worker「nszpc-dpom」
 | `repair_orders` | 維修工單：單號（`R` + 日期 + 流水號）、客戶、保固、訂單、設備、序號、問題、診斷、處理方式、狀態、優先度、費用、收件日、完成日 |
 | `repair_logs` | 維修進度：每次改狀態記一筆 |
 | `settings` | key-value 設定：`cost_method`（`fifo`／`average`）、`quote_doc`（報價單的店家資訊，JSON）、`youtube_api_key`、`youtube_channel_id`、`youtube_stats`（快取）、`ig_*` |
-| `users` | 登入的人：`email`（UNIQUE、不分大小寫，對 Cloudflare Access 的 email）、`username`（跟 email 一樣）、顯示名稱、`role`（`admin`／`user`）、`permissions`（頁面 id 的 JSON 陣列）、`is_active`。**不存密碼** |
+| `users` | 登入的人：`email`（UNIQUE、不分大小寫，對 Cloudflare Access 的 email）、`username`（跟 email 一樣）、顯示名稱、`role`（`admin`／`user`）、`permissions`（頁面 id 的 JSON 陣列，id 見下面「權限」；0007 統一過）、`is_active`。**不存密碼** |
 
 拿掉的：`supplier_prices`（盤商報價，0001 建、0003 刪，[ADR 0004](decisions/0004-remove-supplier-quotes.md)）。
 
@@ -120,10 +120,26 @@ Cloudflare Worker「nszpc-dpom」
 
 **權限**：
 
-- `role = admin`：全部頁面。後端用 `adminOnly` 擋的：使用者管理（`/api/auth/users*`）、分類的新增修改刪除排序、YouTube 金鑰設定（`PUT /api/settings/youtube`）
-- `role = user`：側欄只顯示 `permissions` 勾選的頁面（`frontend/src/lib/constants.ts` 的 `NAV_ITEMS`：儀表板和報表/售後都看 `dashboard`、叫貨管理看 `suppliers`、社群設定看 `youtube`）；
-  分類管理、權限管理只有管理員看得到
-- **頁面權限只在前端**：後端不檢查 `permissions`，登入的人打 API 都拿得到資料（只有上面 `adminOnly` 的會擋）
+- 頁面 id 只有一組：`dashboard`、`inventory`、`quotations`、`customers`、`purchases`、`reports`、`social`、`categories`、`users`
+  （後端 `src/types/auth.ts` 的 `PagePermission`、前端 `frontend/src/lib/constants.ts` 的 `NAV_ITEMS`，權限管理頁的選項是 `NAV_ITEMS` 裡不是 `adminOnly` 的）。
+  存使用者時 `normalizePermissions` 把舊 id（`suppliers`、`youtube`）換成新的、拿掉不認得的
+- `role = admin`：全部頁面，不看 `permissions`。後端用 `adminOnly` 擋的：使用者管理（`/api/auth/users*`）、分類的新增修改刪除排序、
+  YouTube 金鑰設定（`PUT /api/settings/youtube`）、`PUT /api/settings/cost_method`
+- `role = user`：側欄只顯示 `permissions` 勾選的頁面；分類管理、權限管理只有管理員看得到
+- **後端也檢查頁面權限，只擋寫入**：`worker.ts` 的 `mounts` 在 `authMiddleware` 後面掛 `writeRequires`（`src/routes/auth.ts`）：
+  GET、HEAD、OPTIONS 直接過（讀取只要登入）；POST、PUT、PATCH、DELETE 要有這個前綴對應的權限，不然 403「你沒有「xxx」的權限…」
+
+  | 前綴 | 寫入要的權限 |
+  |---|---|
+  | `/api/inventory` | `inventory`（分類另外要管理員） |
+  | `/api/quotations`（含發布到官網、檢測表、照片） | `quotations` |
+  | `/api/customers` | `customers`；`POST /api/customers`（訂單畫面存單時建客戶）`customers` 或 `quotations` 都可以 |
+  | `/api/purchases` | `purchases` |
+  | `/api/reports`（保固、維修） | `reports` |
+  | `/api/settings` | 在 `settings.ts` 每個 key 分開：`quote_doc` → `quotations`、`ig_username` 和 `PUT /instagram/manual` → `social`、`cost_method` 和 `PUT /youtube` → 管理員，其他 key 400 |
+  | `/api/auth/users*` | 管理員 |
+- **本機測試換使用者**：網址是 localhost 而且有 `DEV_USER_EMAIL` 時，`authMiddleware` 會看 `X-Dev-User-Email` 標頭，當成那個 email 登入（API 測試用來測一般使用者的權限）。
+  正式網址不是 localhost、也沒有 `DEV_USER_EMAIL`，這個標頭沒有作用
 
 ## 扣庫存（FIFO）
 

@@ -3,7 +3,7 @@
 import versionFile from '../VERSION';
 import { Router, Response, runHandlers, type Handler, type Request } from './lib/router';
 import { useDatabase } from './models/database';
-import authRouter, { authMiddleware } from './routes/auth';
+import authRouter, { authMiddleware, writeRequires } from './routes/auth';
 import inventoryRouter from './routes/inventory';
 import quotationsRouter from './routes/quotations';
 import customersRouter from './routes/customers';
@@ -16,15 +16,21 @@ import inspectionsRouter from './routes/inspections';
 // 版號只寫在根目錄的 VERSION（前端 next.config.ts 也讀它，見 RELEASING.md）
 const APP_VERSION = versionFile.trim();
 
+// 新增客戶：訂單畫面存單時會順便建客戶，所以有訂單管理權限也可以；其他寫入要客戶管理
+const customersWrite = writeRequires((req) =>
+  req.method === 'POST' && req.path.replace(/\/$/, '') === '/api/customers' ? ['customers', 'quotations'] : ['customers']);
+
 // 跟原本 server.ts 的 app.use 一樣：前綴 → middleware + router（同一個前綴可以有好幾個 router，依序比對）
+// 頁面權限：會改資料的請求要有那個頁面的權限（writeRequires），讀取只要登入；管理員都可以。
+// 分類、使用者、YouTube 金鑰另外在路由上掛 adminOnly；設定（/api/settings）每個 key 在 settings.ts 裡檢查。
 const mounts: [string, Handler[], Router[]][] = [
   ['/api/auth', [], [authRouter]],
-  ['/api/inventory', [authMiddleware], [inventoryRouter]],
+  ['/api/inventory', [authMiddleware, writeRequires('inventory')], [inventoryRouter]],
   // 訂單、發布到官網（:id/publish…）、出機檢測表（:id/inspection）
-  ['/api/quotations', [authMiddleware], [quotationsRouter, publishRouter, inspectionsRouter]],
-  ['/api/customers', [authMiddleware], [customersRouter]],
-  ['/api/purchases', [authMiddleware], [purchasesRouter]],
-  ['/api/reports', [authMiddleware], [reportsRouter]],
+  ['/api/quotations', [authMiddleware, writeRequires('quotations')], [quotationsRouter, publishRouter, inspectionsRouter]],
+  ['/api/customers', [authMiddleware, customersWrite], [customersRouter]],
+  ['/api/purchases', [authMiddleware, writeRequires('purchases')], [purchasesRouter]],
+  ['/api/reports', [authMiddleware, writeRequires('reports')], [reportsRouter]],
   ['/api/settings', [authMiddleware], [settingsRouter]],
 ];
 

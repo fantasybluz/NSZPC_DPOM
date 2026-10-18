@@ -1,11 +1,20 @@
 import { Router, type Request, type Response } from '../lib/router';
 import pool from '../models/database';
-import { adminOnly } from './auth';
+import { adminOnly, requirePermission } from './auth';
+import type { PagePermission } from '../types';
 
 const router = new Router();
 
 // 有些設定是金鑰：只能寫、不能從一般的 /:key 讀出來（以前 YouTube 金鑰會整個送到瀏覽器）
 const SECRET_KEYS = new Set(['youtube_api_key']);
+
+// PUT /:key 只能改這幾個，要有寫它的那個頁面的權限（admin = 只有管理員）；其他 key 由專用的 API 寫
+// （YouTube 用 PUT /youtube、IG 數字用 PUT /instagram/manual），或根本不該從外面改
+const WRITABLE_KEYS: Record<string, PagePermission | 'admin'> = {
+  quote_doc: 'quotations', // 報價單的店家資訊、備註、匯款帳號（訂單管理的「產出報價單」）
+  ig_username: 'social', // 社群設定
+  cost_method: 'admin', // 成本計算方式（fifo／average），目前沒有畫面
+};
 
 const getSetting = async (key: string): Promise<string> => {
   const { rows } = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
@@ -65,7 +74,7 @@ router.get('/youtube/stats', async (req: Request, res: Response) => {
 });
 
 // 手動更新 IG 追蹤數
-router.put('/instagram/manual', async (req: Request, res: Response) => {
+router.put('/instagram/manual', requirePermission('social'), async (req: Request, res: Response) => {
   const { followers, following, posts } = req.body;
   if (followers !== undefined) await pool.query("INSERT INTO settings (key, value) VALUES ('ig_followers', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [String(followers)]);
   if (following !== undefined) await pool.query("INSERT INTO settings (key, value) VALUES ('ig_following', $1) ON CONFLICT (key) DO UPDATE SET value = $1", [String(following)]);
@@ -81,8 +90,15 @@ router.get('/:key', async (req: Request, res: Response) => {
   res.json({ key: req.params.key, value: rows[0] ? rows[0].value : '' });
 });
 
-router.put('/:key', async (req: Request, res: Response) => {
-  if (SECRET_KEYS.has(req.params.key as string)) return res.status(403).json({ error: '請用 YouTube 設定儲存金鑰' });
+// 先檢查能不能改這個 key、有沒有權限，通過了才往下（next）
+router.put('/:key', (req: Request, res: Response, next: () => void) => {
+  const key = req.params.key as string;
+  if (SECRET_KEYS.has(key)) return res.status(403).json({ error: '請用 YouTube 設定儲存金鑰' });
+  const need = Object.hasOwn(WRITABLE_KEYS, key) ? WRITABLE_KEYS[key] : undefined;
+  if (!need) return res.status(400).json({ error: `「${key}」這個設定不能從這裡改` });
+  if (need === 'admin') return adminOnly(req, res, next);
+  return requirePermission(need)(req, res, next);
+}, async (req: Request, res: Response) => {
   const { value } = req.body as { value?: string };
   await pool.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2', [req.params.key, value || '']);
   res.json({ success: true });

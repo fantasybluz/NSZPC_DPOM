@@ -20,4 +20,5 @@
 
 - 舊的報價紀錄跟著表一起刪掉，救不回來（除非用 D1 Time Travel 還原到 0003 之前）
 - 頁面權限的 id `suppliers` 現在指的是「叫貨管理」，名字有點對不上，沒有改（改了已經存在 `users.permissions` 裡的值要跟著搬）
+  （後來 [ADR 0010](0010-page-permissions-backend.md) 改成 `purchases`，`migrations/0007_permissions.sql` 搬了舊值）
 - 之後要比價得重新做
