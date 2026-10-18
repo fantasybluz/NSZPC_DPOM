@@ -267,7 +267,8 @@ export async function stockOut(inventoryId: number, quantity: number, reason = '
 // ========== 訂單扣帳 / 還原 ==========
 //
 // 「訂單成立」(deposit/pending/completed) 時對 quotation_items.inventory_id 不為 null 的項目
-// 依 FIFO 從庫存批次扣量；逐批次紀錄到 quotation_stock_deductions，
+// 從庫存批次扣量（跟手動出貨一樣看 settings.cost_method：fifo 照進貨日從最舊的扣、成本照批次算；
+// average 照建立順序扣、成本用平均成本）；逐批次紀錄到 quotation_stock_deductions，
 // 之後狀態回退（draft/cancelled）或刪單時，依紀錄把量加回原批次，
 // 若批次已被刪除（庫存品被刪掉），則改建新批次補回。
 // 跟原本不同的是：寫入都在同一個 batch（交易）裡，中途失敗不會只扣一半。
@@ -288,13 +289,15 @@ export async function deductQuotationStock(quotationId: number): Promise<void> {
     return;
   }
 
+  const method = await getCostMethod();
   const inventoryIds = [...new Set(items.map((it) => it.inventory_id))];
   const idsJson = JSON.stringify(inventoryIds);
   const [{ rows: inventories }, { rows: batches }] = await pool.batch([
-    ['SELECT id, name, quantity FROM inventory WHERE id IN (SELECT value FROM json_each($1))', [idsJson]],
+    ['SELECT id, name, quantity, avg_cost FROM inventory WHERE id IN (SELECT value FROM json_each($1))', [idsJson]],
     [
       `SELECT id, inventory_id, unit_cost, remaining FROM inventory_batches
-       WHERE inventory_id IN (SELECT value FROM json_each($1)) AND remaining > 0 ORDER BY batch_date ASC, id ASC`,
+       WHERE inventory_id IN (SELECT value FROM json_each($1)) AND remaining > 0
+       ORDER BY ${method === 'fifo' ? 'batch_date ASC, id ASC' : 'id ASC'}`,
       [idsJson],
     ],
   ]);
@@ -321,20 +324,40 @@ export async function deductQuotationStock(quotationId: number): Promise<void> {
   const takes: BatchTake[] = [];
   const deductions: { inventory_id: number; batch_id: number; take: number; unit_cost: number }[] = [];
   const logs: LogEntry[] = [];
+  const reason = `訂單扣帳 #${quotationId}`;
   for (const item of items) {
     const invBatches = batchesByInv.get(item.inventory_id);
     if (!invBatches?.length) continue; // 沒有批次紀錄就跳過
-    for (const { take } of allocate(invBatches, item.quantity)) {
+    const itemTakes = allocate(invBatches, item.quantity).map((t) => t.take);
+    for (const take of itemTakes) {
       takes.push({ id: take.id, take: take.take });
+      // 還原時加回原批次，所以記批次自己的單價
       deductions.push({ inventory_id: item.inventory_id, batch_id: take.id, take: take.take, unit_cost: take.unit_cost });
+      if (method === 'fifo') {
+        logs.push({
+          inventory_id: item.inventory_id,
+          type: 'out',
+          change_qty: -take.take,
+          unit_cost: take.unit_cost,
+          total_cost: take.take * take.unit_cost,
+          reason,
+          batch_id: take.id,
+        });
+      }
+    }
+    const qty = itemTakes.reduce((sum, t) => sum + t.take, 0);
+    if (method === 'average' && qty > 0) {
+      // 跟手動出貨一樣：一筆異動，成本 = 平均成本 × 數量
+      const avg = Number(invById.get(item.inventory_id)?.avg_cost) || 0;
+      const totalCost = Math.round(avg * qty);
       logs.push({
         inventory_id: item.inventory_id,
         type: 'out',
-        change_qty: -take.take,
-        unit_cost: take.unit_cost,
-        total_cost: take.take * take.unit_cost,
-        reason: `訂單扣帳 #${quotationId}`,
-        batch_id: take.id,
+        change_qty: -qty,
+        unit_cost: Math.round(totalCost / qty),
+        total_cost: totalCost,
+        reason,
+        batch_id: null,
       });
     }
   }

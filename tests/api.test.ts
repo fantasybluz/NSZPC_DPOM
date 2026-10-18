@@ -273,6 +273,36 @@ describe('Inventory + quotation stock', () => {
   });
 });
 
+describe('訂單扣庫存看成本計算方式', () => {
+  it('average：照建立順序扣，異動紀錄的成本用平均成本（跟手動出貨一樣）', async () => {
+    const inv = await request('POST', '/api/inventory', { category_id: 1, name: `平均成本${unique}`, initial_qty: 2, initial_cost: 100 });
+    await request('POST', `/api/inventory/${inv.body.id}/stock-in`, { quantity: 2, unit_cost: 300 });
+    assert.equal((await request('PUT', '/api/settings/cost_method', { value: 'average' })).status, 200);
+    try {
+      const q = await request('POST', '/api/quotations', {
+        customer_name: `平均成本${unique}`, status: 'pending', items: [{ name: 'X', cost: 200, price: 300, quantity: 3, inventory_id: inv.body.id }],
+      });
+      assert.equal(q.status, 200, JSON.stringify(q.body));
+      const detail = await request('GET', `/api/inventory/${inv.body.id}/detail`);
+      assert.equal(detail.body.quantity, 1);
+      const out = detail.body.logs.filter((l: any) => l.type === 'out');
+      assert.equal(out.length, 1);
+      assert.equal(out[0].change_qty, -3);
+      assert.equal(out[0].unit_cost, 200);
+      assert.equal(out[0].total_cost, 600);
+
+      // 刪單照扣的批次加回去
+      assert.equal((await request('DELETE', `/api/quotations/${q.body.id}`)).status, 200);
+      const restored = await request('GET', `/api/inventory/${inv.body.id}/detail`);
+      assert.equal(restored.body.quantity, 4);
+      assert.equal(restored.body.avg_cost, 200);
+    } finally {
+      await request('PUT', '/api/settings/cost_method', { value: 'fifo' });
+      await request('DELETE', `/api/inventory/${inv.body.id}`);
+    }
+  });
+});
+
 // ========== 出機檢測表 ==========
 describe('Inspection API', () => {
   it('沒存過給草稿（規格從品項帶入），存了之後讀回來一樣', async () => {

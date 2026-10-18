@@ -133,7 +133,9 @@ Cloudflare Worker「nszpc-dpom」
 - **進貨**（手動進貨、新增商品的初始庫存、叫貨到貨）：每個商品建一個批次、記一筆 `in`、重算
 - **手動出貨**（`stockOut`）：`settings.cost_method` 是 `fifo` 時照 `batch_date`、`id` 從最舊的批次扣，成本是各批次單價 × 扣的量；
   `average` 照 `id` 扣批次，成本是 `avg_cost × 數量`
-- **訂單扣帳**（`deductQuotationStock`）：訂單狀態變成 `deposit`、`pending`、`completed` 時，品項有 `inventory_id` 的**一律照 FIFO** 從批次扣：
+- **訂單扣帳**（`deductQuotationStock`）：訂單狀態變成 `deposit`、`pending`、`completed` 時，品項有 `inventory_id` 的從批次扣，
+  **跟手動出貨一樣看 `cost_method`**：`fifo` 照 `batch_date`、`id` 扣，每個批次記一筆異動（成本 = 批次單價）；`average` 照 `id` 扣，每個品項記一筆異動（成本 = `avg_cost × 數量`，`batch_id` 是 null）。
+  `quotation_stock_deductions` 兩種都記每個批次扣了多少、批次自己的單價（還原用）：
   1. 一個 batch 讀出相關商品和它們還有剩的批次
   2. 先檢查：同一個商品的需求量加總（兩列扣同一個商品也算得對），大於現有數量就丟「庫存不足：品名（需要 N，目前 M）」，什麼都不寫
   3. 在 JS 分配每個批次扣多少（同一個批次被兩列扣到會先加總，因為 `UPDATE` 每列只套用一次）
