@@ -371,6 +371,29 @@ describe('Quotation images', () => {
   });
 });
 
+describe('發布到官網的照片', () => {
+  it('HEIC 不能放上官網：草稿標成不能選，發布回 400', async () => {
+    const q = await request('POST', '/api/quotations', { customer_name: `HEIC${unique}`, items: [] });
+    const form = new FormData();
+    form.append('images', new Blob([new Uint8Array([0, 0, 0, 24])], { type: 'image/heic' }), 'IMG_0001.HEIC');
+    form.append('images', new Blob([new Uint8Array([0xff, 0xd8, 0xff])], { type: 'image/jpeg' }), 'ok.jpg');
+    const up = await fetch(new URL(`/api/quotations/${q.body.id}/images`, BASE_URL), { method: 'POST', body: form });
+    assert.equal(up.status, 200);
+    const [heic, jpg] = await up.json();
+
+    const draft = await request('GET', `/api/quotations/${q.body.id}/publish-draft`);
+    assert.equal(draft.status, 200);
+    assert.equal(draft.body.images.find((i: any) => i.id === heic.id).publishable, false);
+    assert.equal(draft.body.images.find((i: any) => i.id === jpg.id).publishable, true);
+
+    const res = await request('POST', `/api/quotations/${q.body.id}/publish`, { draft: draft.body.draft, imageIds: [heic.id, jpg.id] });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /HEIC 照片不能放上官網/);
+    assert.match(res.body.error, /IMG_0001\.HEIC/);
+    await request('DELETE', `/api/quotations/${q.body.id}`);
+  });
+});
+
 // ========== 客戶 ==========
 describe('Customers API', () => {
   let custId: number;

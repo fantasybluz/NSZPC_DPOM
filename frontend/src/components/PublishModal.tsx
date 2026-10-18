@@ -30,7 +30,8 @@ interface Draft {
 
 interface DraftResponse {
   draft: Draft;
-  images: { id: number; filename: string; original_name: string }[];
+  /** publishable = false：HEIC／HEIF，不能放上官網 */
+  images: { id: number; filename: string; original_name: string; publishable?: boolean }[];
   tagOptions: string[];
   websiteOrderId: string;
   websiteUrl: string;
@@ -40,6 +41,12 @@ const SPEC_LABELS: [keyof Draft, string][] = [
   ['cpu', 'CPU'], ['motherboard', '主機板'], ['ram', '記憶體'], ['storage', '硬碟'],
   ['gpu', '顯示卡'], ['psu', '電源供應器'], ['cooler', '散熱'], ['pcCase', '機殼'],
 ];
+
+const MAX_IMAGES = 10;
+const HEIC_NOTE = 'HEIC 照片不能放上官網（多數瀏覽器看不到），請改傳 JPG';
+/** 放上官網只收 JPG、PNG、WebP、GIF（後端也擋）；舊的回應沒有 publishable 就看副檔名 */
+const canPublish = (img: DraftResponse['images'][number]) =>
+  img.publishable ?? /\.(jpe?g|png|webp|gif)$/i.test(img.filename);
 
 const STATUS_LABELS: Record<Draft['status'], string> = {
   pending: '準備中', shipping: '出貨中', delivered: '已交機', cancelled: '已取消',
@@ -62,7 +69,7 @@ export default function PublishModal({ quotationId, onClose }: { quotationId: nu
         setData(r);
         setDraft(r.draft);
         setTagText(r.draft.tags.join('、'));
-        setPicked(new Set(r.images.map((i) => i.id)));
+        setPicked(new Set(r.images.filter(canPublish).slice(0, MAX_IMAGES).map((i) => i.id)));
       })
       .catch((err) => { showToast(err.message, 'danger'); onClose(); });
   }, [quotationId, showToast, onClose]);
@@ -189,16 +196,27 @@ export default function PublishModal({ quotationId, onClose }: { quotationId: nu
               </div>
             ))}
             <div className="col-12">
-              <label className="form-label">照片（勾選要放上官網的，最多 10 張）</label>
+              <label className="form-label">照片（勾選要放上官網的，最多 {MAX_IMAGES} 張）</label>
               {data.images.length === 0 ? (
                 <p className="text-muted small mb-0">這張訂單還沒有照片，可以先到「編輯」上傳。</p>
               ) : (
                 <div className="d-flex flex-wrap gap-2">
                   {data.images.map((img) => {
+                    if (!canPublish(img)) {
+                      // HEIC：瀏覽器多半顯示不出來，也不能選
+                      return (
+                        <div key={img.id} title={`${img.original_name}：${HEIC_NOTE}`}
+                          className="border rounded d-flex flex-column align-items-center justify-content-center text-muted small opacity-50"
+                          style={{ width: 120, height: 90, cursor: 'not-allowed' }}>
+                          <i className="bi bi-file-earmark-image fs-4" />
+                          <span>HEIC 不能選</span>
+                        </div>
+                      );
+                    }
                     const on = picked.has(img.id);
                     return (
                       <button key={img.id} type="button"
-                        onClick={() => setPicked((p) => { const n = new Set(p); if (n.has(img.id)) n.delete(img.id); else if (n.size < 10) n.add(img.id); return n; })}
+                        onClick={() => setPicked((p) => { const n = new Set(p); if (n.has(img.id)) n.delete(img.id); else if (n.size < MAX_IMAGES) n.add(img.id); return n; })}
                         className={`p-0 border rounded ${on ? 'border-primary border-3' : 'opacity-50'}`} style={{ background: 'none' }}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img src={`/api/quotations/${quotationId}/images/${img.filename}`} alt={img.original_name}
@@ -207,6 +225,9 @@ export default function PublishModal({ quotationId, onClose }: { quotationId: nu
                     );
                   })}
                 </div>
+              )}
+              {data.images.some((img) => !canPublish(img)) && (
+                <p className="text-muted small mt-2 mb-0"><i className="bi bi-info-circle" /> {HEIC_NOTE}</p>
               )}
             </div>
           </div>

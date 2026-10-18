@@ -201,6 +201,7 @@ multipart，欄位 `images`，一次最多 10 張、每張 10MB，只收 `image/
   `salePrice`（總價 − 服務費）、`status`（出貨進度 `shipped` → `shipping`，其他都是 `delivered`）、
   八個規格欄位 `cpu, motherboard, ram, storage, gpu, psu, cooler, pcCase`（品項分類往上找第一層，見 `src/lib/specs.ts`），
   `requirementIntro`、`youtubeEmbedUrl`、`tags` 是空的
+- `images`：這張訂單的照片 `[{ id, filename, original_name, publishable }]`，`publishable` 是 `false` 的是 HEIC／HEIF（不能放上官網）
 - `tagOptions`：官網出機紀錄用過的標籤（官網連不到就是空的）
 - `websiteOrderId`、`websiteUrl`：發布過的話是官網那筆的 id 和網址
 
@@ -209,7 +210,8 @@ multipart，欄位 `images`，一次最多 10 張、每張 10MB，只收 `image/
 `{ draft, imageIds }` → `{ id, url }`。選的圖從 R2 讀出來交給官網（`replaceOrderImages`，先刪掉這張單在官網的舊照片），
 再 `publishOrder`：發布過就更新同一筆，不會多一筆。
 
-- 照片加起來超過 25MB 回 400；官網那邊再擋每張 10MB、最多 10 張、格式（jpeg、png、webp、gif、heic），不過回 400「照片上傳失敗：…」
+- 選超過 10 張回 400；選到 HEIC／HEIF（看檔名的副檔名）回 400「HEIC 照片不能放上官網（多數瀏覽器看不到），請改傳 JPG：檔名」，只收 JPG、PNG、WebP、GIF
+- 照片加起來超過 25MB 回 400；官網那邊再擋每張 10MB、最多 10 張、格式，不過回 400「照片上傳失敗：…」
 - 官網的欄位檢查沒過回 422，`details` 是官網的錯誤訊息
 - 成功後把官網的 id 存到 `quotations.website_order_id`
 

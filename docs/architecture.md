@@ -154,7 +154,8 @@ Cloudflare Worker「nszpc-dpom」
   呼叫官網 Worker（repo `nszpc_web` 的 `backend/src/rpc.ts`）的 `replaceOrderImages`、`publishOrder`、`unpublishOrder`、`orderTags`。
   Worker 對 Worker 直接呼叫，官網不用開公開的 API，也不用另外驗身分（只有綁了它的 Worker 叫得到）
 - 型別在 `publish.ts` 裡抄了一份（`PublishOrderInput`、`WebsiteAPI`），**官網改了介面要兩邊一起改**
-- 照片的 ref 是 `dpom-<訂單 id>`，官網存在 `orders/dpom-<id>/` 底下；每次發布先刪掉舊的再存新的
+- 照片的 ref 是 `dpom-<訂單 id>`，官網存在 `orders/dpom-<id>/` 底下；每次發布先刪掉舊的再存新的。
+  **只送 JPG、PNG、WebP、GIF**：HEIC／HEIF 多數瀏覽器顯示不出來，`publish.ts` 看副檔名擋掉（官網那邊也不收）
 - 官網上的出機紀錄只有：日期、標題、需求介紹、YouTube、標籤、地區、售價（總價 − 服務費，官網的服務費存 0）、狀態、8 個規格、照片。
   **不帶**客戶姓名、電話、成本、服務費
 - `quotations.website_order_id` 記住官網那筆的 id，再發布就是更新；`WEBSITE_URL`（`https://nszpc.bluz.dev`）用來組連結

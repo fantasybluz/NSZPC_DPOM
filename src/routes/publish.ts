@@ -48,6 +48,12 @@ const STATUS_BY_DELIVERY: Record<string, PublishOrderInput['status']> = {
 
 // 官網的檢查：每個欄位都要有值、總共最多 10 張照片
 const MAX_TOTAL_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_PUBLISH_IMAGES = 10;
+
+// 放上官網的照片只收 JPG、PNG、WebP、GIF：HEIC／HEIF 多數瀏覽器看不到（訂單裡還是可以存）
+const PUBLISHABLE_IMAGE = /\.(jpe?g|png|webp|gif)$/i;
+const HEIC_NOT_PUBLISHABLE = 'HEIC 照片不能放上官網（多數瀏覽器看不到），請改傳 JPG';
+const isPublishable = (filename: string) => PUBLISHABLE_IMAGE.test(filename);
 
 const toSlashDate = (d: string) => (d || taipeiDate()).slice(0, 10).replace(/-/g, '/');
 
@@ -62,6 +68,8 @@ router.get('/:id/publish-draft', async (req: Request, res: Response) => {
   if (!q) return res.status(404).json({ error: '找不到訂單' });
 
   const specs = await specsFromItems(items as { category: string; name: string; spec: string; quantity: number }[]);
+  // publishable = false 的（HEIC／HEIF）前端顯示成不能勾
+  const imageList = images.map((img: any) => ({ ...img, publishable: isPublishable(img.filename) }));
 
   let tags: string[] = [];
   try { tags = await website(req).orderTags(); } catch { /* 官網暫時連不到就不給建議 */ }
@@ -80,7 +88,7 @@ router.get('/:id/publish-draft', async (req: Request, res: Response) => {
 
   res.json({
     draft,
-    images,
+    images: imageList,
     tagOptions: tags,
     websiteOrderId: q.website_order_id || '',
     websiteUrl: q.website_order_id ? `${req.env.WEBSITE_URL}/orders/item/${q.website_order_id}` : '',
@@ -104,6 +112,11 @@ router.post('/:id/publish', async (req: Request, res: Response) => {
       [qId, JSON.stringify(ids)],
     )
     : { rows: [] as any[] };
+  if (imgRows.length > MAX_PUBLISH_IMAGES) return res.status(400).json({ error: `照片最多 ${MAX_PUBLISH_IMAGES} 張，請少選幾張` });
+  const heic = imgRows.filter((img: any) => !isPublishable(img.filename));
+  if (heic.length) {
+    return res.status(400).json({ error: `${HEIC_NOT_PUBLISHABLE}：${heic.map((img: any) => img.original_name || img.filename).join('、')}` });
+  }
   const files: { name: string; type: string; data: ArrayBuffer }[] = [];
   let total = 0;
   for (const img of imgRows) {
