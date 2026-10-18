@@ -182,7 +182,11 @@ router.get('/notifications', async (_req: Request, res: Response) => {
     [in30.toISOString().slice(0,10), today]
   );
   const { rows: unpaidSettlements } = await pool.query("SELECT * FROM settlements WHERE status='unpaid'");
-  const { rows: activeRepairs } = await pool.query("SELECT * FROM repair_orders WHERE status NOT IN ('completed','cancelled') ORDER BY priority DESC");
+  // 進行中 = 還沒完成、還沒取件、沒取消；照優先度（緊急 > 急件 > 一般 > 低），同優先度先收件的在前
+  const { rows: activeRepairs } = await pool.query(`
+    SELECT * FROM repair_orders WHERE status NOT IN ('completed', 'returned', 'cancelled')
+    ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, created_at ASC, id ASC
+  `);
 
   res.json({ lowStock, expiringWarranties, unpaidSettlements, activeRepairs });
 });

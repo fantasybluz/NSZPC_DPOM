@@ -599,6 +599,19 @@ describe('Reports API', () => {
     assert.equal((await request('DELETE', `/api/reports/repairs/${repair.body.id}`)).status, 200);
   });
 
+  it('通知的進行中維修：不含已取件，照優先度排（緊急 > 急件 > 一般 > 低）', async () => {
+    const make = async (priority: string) =>
+      (await request('POST', '/api/reports/repairs', { customer_name: `優先度${unique}`, device_name: priority, priority })).body.id as number;
+    const ids = { low: await make('low'), urgent: await make('urgent'), normal: await make('normal'), high: await make('high') };
+    const returned = await make('urgent');
+    await request('PUT', `/api/reports/repairs/${returned}`, { status: 'returned' });
+
+    const { body } = await request('GET', '/api/reports/notifications');
+    const mine = body.activeRepairs.filter((r: any) => r.customer_name === `優先度${unique}`);
+    assert.deepEqual(mine.map((r: any) => r.id), [ids.urgent, ids.high, ids.normal, ids.low]);
+    for (const id of [...Object.values(ids), returned]) await request('DELETE', `/api/reports/repairs/${id}`);
+  });
+
   it('保固可以標記報修、改回有效', async () => {
     const w = await request('POST', '/api/reports/warranties', { product_name: `保固測試${unique}`, ship_date: '2026-01-01', warranty_months: 12 });
     assert.equal((await request('PUT', `/api/reports/warranties/${w.body.id}`, { status: 'claimed' })).status, 200);

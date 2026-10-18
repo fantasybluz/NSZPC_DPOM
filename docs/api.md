@@ -381,7 +381,7 @@ multipart，欄位 `images`，一次最多 10 張、每張 10MB，只收 `image/
 
 ### `GET /api/reports/notifications`
 
-`{ lowStock, expiringWarranties（30 天內到期、狀態 active）, unpaidSettlements, activeRepairs（不是 completed、cancelled 的工單）}`。
+`{ lowStock, expiringWarranties（30 天內到期、狀態 active）, unpaidSettlements, activeRepairs（不是 completed、returned、cancelled 的工單，照優先度 urgent > high > normal > low 排，同優先度先建的在前）}`。
 
 ### `GET /api/reports/export/:type`
 
