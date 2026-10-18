@@ -599,6 +599,19 @@ describe('Reports API', () => {
     assert.equal((await request('DELETE', `/api/reports/repairs/${repair.body.id}`)).status, 200);
   });
 
+  it('CSV：0 照樣輸出、公式開頭的文字前面加 \'', async () => {
+    const repair = await request('POST', '/api/reports/repairs', {
+      customer_name: `CSV${unique}`, device_name: '=HYPERLINK("http://evil.example")', issue: '@SUM(A1)', serial_number: '-1+1',
+    });
+    const csv = String((await request('GET', '/api/reports/export/repairs')).body);
+    const line = csv.split('\n').find((l) => l.includes(`CSV${unique}`)) || '';
+    const cells = line.split('","').map((c) => c.replace(/^"|"$/g, ''));
+    assert.equal(cells[2], `'=HYPERLINK(""http://evil.example"")`);
+    assert.equal(cells[3], "'@SUM(A1)");
+    assert.equal(cells[6], '0'); // 費用 0 不是空白
+    await request('DELETE', `/api/reports/repairs/${repair.body.id}`);
+  });
+
   it('通知的進行中維修：不含已取件，照優先度排（緊急 > 急件 > 一般 > 低）', async () => {
     const make = async (priority: string) =>
       (await request('POST', '/api/reports/repairs', { customer_name: `優先度${unique}`, device_name: priority, priority })).body.id as number;

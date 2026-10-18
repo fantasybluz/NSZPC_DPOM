@@ -386,6 +386,7 @@ multipart，欄位 `images`，一次最多 10 張、每張 10MB，只收 `image/
 ### `GET /api/reports/export/:type`
 
 下載 CSV（UTF-8 加 BOM，Excel 打得開），檔名 `<type>_<日期>.csv`。`type`：`inventory`、`customers`、`quotations`、`repairs`，其他回 400。
+每格都用雙引號包起來；`0` 輸出 `0`（只有沒有值才是空白）；文字開頭是 `=`、`+`、`-`、`@`、Tab、CR 的前面加 `'`，Excel 不會當成公式（CSV injection），數字不加。
 
 ## 設定、社群
 

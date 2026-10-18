@@ -193,6 +193,18 @@ router.get('/notifications', async (_req: Request, res: Response) => {
 
 // ========== 匯出 CSV ==========
 
+/**
+ * 一格 CSV：0 照樣輸出 0（原本 `v || ''` 會變成空白），null／undefined 才是空白。
+ * 文字開頭是 = + - @ Tab 換行（CR）的，前面加 ' 讓 Excel 當成文字，不會被當成公式執行
+ * （OWASP 的 CSV Injection 建議）；數字（含負數）不加
+ */
+function csvCell(value: unknown): string {
+  if (value === null || value === undefined) return '""';
+  let text = String(value);
+  if (typeof value !== 'number' && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 router.get('/export/:type', async (req: Request, res: Response) => {
   const { type } = req.params;
   let rows: any[] = [];
@@ -229,7 +241,7 @@ router.get('/export/:type', async (req: Request, res: Response) => {
   }
 
   const bom = '\uFEFF';
-  const csv = bom + headers.join(',') + '\n' + rows.map(r => r.map((v: any) => `"${String(v || '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  const csv = bom + [headers, ...rows].map((r) => r.map(csvCell).join(',')).join('\n');
 
   const date = new Date().toISOString().slice(0, 10);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');

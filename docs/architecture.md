@@ -193,6 +193,7 @@ Cloudflare Worker「nszpc-dpom」
   `Origin` 有給而且不是自己網站也擋，**例外**是網站和 Origin 都是 `localhost`／`127.0.0.1`（本機的 Next.js 開發伺服器 3000 port 代理到 8787）。擋了回 403
 - **管理員才能做的**後端也擋（`adminOnly`），不是只有前端藏按鈕
 - **上傳**只收點陣圖（見上面），讀圖片時加 sandbox CSP
+- **匯出 CSV**：文字開頭是 `= + - @`、Tab、CR 的格子前面加 `'`（OWASP CSV Injection），客人資料裡打的公式不會在 Excel 執行
 - **API 的安全性標頭**（`worker.ts` 的 `SECURITY_HEADERS`）：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、
   `Referrer-Policy: strict-origin-when-cross-origin`、`Strict-Transport-Security: max-age=31536000; includeSubDomains`，沒指定的話 `Cache-Control: no-store`
 - **前端靜態檔的標頭**在 [`frontend/public/_headers`](../frontend/public/_headers)（build 時複製到 `frontend/out`，Cloudflare 自動套用）：
