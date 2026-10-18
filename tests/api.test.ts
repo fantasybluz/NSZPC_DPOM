@@ -218,6 +218,17 @@ describe('Inventory + quotation stock', () => {
     assert.equal(list.body.length, 0);
   });
 
+  it('修改時沒給狀態：維持原本的狀態，庫存照新品項重扣', async () => {
+    const res = await request('PUT', `/api/quotations/${quotId}`, {
+      customer_name: '王大明', items: [{ name: 'R5', cost: 4500, price: 5990, quantity: 5, inventory_id: itemId }],
+    });
+    assert.equal(res.status, 200);
+    const q = await request('GET', `/api/quotations/${quotId}`);
+    assert.equal(q.body.status, 'deposit');
+    assert.equal(q.body.stock_deducted, 1);
+    assert.equal((await request('GET', `/api/inventory/${itemId}/detail`)).body.quantity, 5);
+  });
+
   it('改回草稿會把庫存加回去', async () => {
     const res = await request('PUT', `/api/quotations/${quotId}`, {
       customer_name: '王大明', status: 'draft', items: [{ name: 'R5', cost: 4500, price: 5990, quantity: 7, inventory_id: itemId }],

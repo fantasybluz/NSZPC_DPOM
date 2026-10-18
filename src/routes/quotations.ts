@@ -182,13 +182,14 @@ router.post('/', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   const { customer_id: rawCustomerId, customer_name: rawCustomerName, items, deposit, service_fee, status, note, item_title, demand_area, ship_date, delivery_status } = req.body;
   const qId = parseInt(req.params.id as string);
-  const newStatus = status || 'draft';
   const { id: customer_id, name: customer_name } = await resolveCustomer(rawCustomerId, rawCustomerName);
 
   // 讀目前狀態與扣帳旗標
   const { rows: curRows } = await pool.query('SELECT status, stock_deducted FROM quotations WHERE id = $1', [qId]);
   if (!curRows.length) return res.status(404).json({ error: '找不到訂單' });
   const wasDeducted = curRows[0].stock_deducted === 1;
+  // 沒給狀態就維持原本的（原本會被改回草稿、庫存也跟著還回去）
+  const newStatus = status && typeof status === 'string' ? status : curRows[0].status || 'draft';
 
   let total_cost = 0, total_price = 0;
   if (items) {
