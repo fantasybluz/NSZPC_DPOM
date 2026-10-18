@@ -4,6 +4,7 @@ import pool, {
   insertQuotationItems,
   isDeductingStatus,
   restoreQuotationStock,
+  restoreQuotationStockStatements,
   taipeiDate,
   taipeiMonthSql,
 } from '../models/database';
@@ -295,21 +296,27 @@ router.delete('/:id/images/:imageId', async (req: Request, res: Response) => {
 });
 
 // 刪除估價單
+// 全部放進同一個 batch（一起成功或失敗）：先拿掉保固、維修工單對這張單的關聯（不然外鍵會擋），
+// 再還原庫存、刪照片紀錄、品項、訂單。資料庫刪成功之後才刪 R2 的照片，失敗時不會照片沒了、訂單還在。
 router.delete('/:id', async (req: Request, res: Response) => {
   const qId = parseInt(req.params.id as string);
-  // 若已扣帳，先還原庫存
-  const { rows: cur } = await pool.query('SELECT stock_deducted FROM quotations WHERE id = $1', [qId]);
-  if (cur[0]?.stock_deducted === 1) {
-    await restoreQuotationStock(qId);
-  }
+  const [{ rows: cur }, { rows: images }] = await pool.batch([
+    ['SELECT stock_deducted FROM quotations WHERE id = $1', [qId]],
+    ['SELECT filename FROM quotation_images WHERE quotation_id = $1', [qId]],
+  ]);
+  if (!cur.length) return res.json({ success: true });
+  const restore = cur[0].stock_deducted === 1 ? await restoreQuotationStockStatements(qId) : [];
 
-  const { rows: images } = await pool.query('SELECT filename FROM quotation_images WHERE quotation_id = $1', [qId]);
-  if (images.length) await req.env.UPLOADS.delete(images.map((img: any) => uploadKey(img.filename)));
   await pool.batch([
+    // 保固、維修工單留著（客戶名字還在），只是不再關聯這張單
+    ['UPDATE warranties SET quotation_id = NULL WHERE quotation_id = $1', [qId]],
+    ['UPDATE repair_orders SET quotation_id = NULL WHERE quotation_id = $1', [qId]],
+    ...restore,
     ['DELETE FROM quotation_images WHERE quotation_id = $1', [qId]],
     ['DELETE FROM quotation_items WHERE quotation_id = $1', [qId]],
     ['DELETE FROM quotations WHERE id = $1', [qId]],
   ]);
+  if (images.length) await req.env.UPLOADS.delete(images.map((img: any) => uploadKey(img.filename)));
   res.json({ success: true });
 });
 

@@ -87,7 +87,11 @@ router.put('/warranties/:id', async (req: Request, res: Response) => {
 });
 
 router.delete('/warranties/:id', async (req: Request, res: Response) => {
-  await pool.query('DELETE FROM warranties WHERE id=$1', [req.params.id]);
+  await pool.batch([
+    // 維修工單留著，只是不再關聯這筆保固（不然外鍵會擋住刪除）
+    ['UPDATE repair_orders SET warranty_id = NULL WHERE warranty_id = $1', [req.params.id]],
+    ['DELETE FROM warranties WHERE id=$1', [req.params.id]],
+  ]);
   res.json({ success: true });
 });
 

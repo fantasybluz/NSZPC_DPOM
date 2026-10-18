@@ -79,8 +79,10 @@ router.put('/:id', async (req: Request, res: Response) => {
 
 router.delete('/:id', async (req: Request, res: Response) => {
   await pool.batch([
-    // 訂單留著（名字還在），只是不再關聯；不先拿掉的話外鍵會擋住刪除
+    // 訂單、保固、維修工單留著（名字還在），只是不再關聯；不先拿掉的話外鍵會擋住刪除
     ['UPDATE quotations SET customer_id = NULL WHERE customer_id = $1', [req.params.id]],
+    ['UPDATE warranties SET customer_id = NULL WHERE customer_id = $1', [req.params.id]],
+    ['UPDATE repair_orders SET customer_id = NULL WHERE customer_id = $1', [req.params.id]],
     ['DELETE FROM service_records WHERE customer_id = $1', [req.params.id]],
     ['DELETE FROM customers WHERE id = $1', [req.params.id]],
   ]);

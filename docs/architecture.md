@@ -141,7 +141,8 @@ Cloudflare Worker「nszpc-dpom」
   - 商品已經被刪掉、或沒有批次的品項跳過，不擋
 - **還原**（`restoreQuotationStock`）：照 `quotation_stock_deductions` 把量加回原批次；原批次被刪了（商品還在）就用當時的單價建一個新批次補回
 - **什麼時候扣、什麼時候還**：`PUT /api/quotations/:id` 一律「有扣過就先全部還原 → 換品項 → 新狀態要扣就重扣」，所以改品項、改數量、改狀態都對得起來；
-  改成 `draft`、`cancelled` 就是還原後不再扣。刪訂單時有扣著的先還原
+  改成 `draft`、`cancelled` 就是還原後不再扣。刪訂單時有扣著的先還原：`restoreQuotationStockStatements` 只組 SQL，
+  跟「拿掉保固、維修工單的關聯」「刪品項、照片紀錄、訂單」放進同一個 batch，中途失敗整個回滾（原批次不在時補回的新批次也在同一個 batch 裡建）
 
 ## 發布到官網（Workers RPC）
 

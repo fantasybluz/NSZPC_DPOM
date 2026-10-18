@@ -353,22 +353,27 @@ export async function deductQuotationStock(quotationId: number): Promise<void> {
   ]);
 }
 
-export async function restoreQuotationStock(quotationId: number): Promise<void> {
+/**
+ * 還原一張訂單扣的庫存要跑的 SQL（只讀、不寫）：照 quotation_stock_deductions 加回原批次，
+ * 原批次被刪了（商品還在）就用當時的單價建一個新批次補回。
+ * 刪訂單時跟其他刪除放進同一個 batch，中途失敗不會只做一半。
+ */
+export async function restoreQuotationStockStatements(quotationId: number): Promise<[string, unknown[]][]> {
   const { rows: deductions } = await pool.query<{ inventory_id: number; batch_id: number; quantity: number; unit_cost: number }>(
     'SELECT inventory_id, batch_id, quantity, unit_cost FROM quotation_stock_deductions WHERE quotation_id = $1',
     [quotationId],
   );
-  if (!deductions.length) {
-    await pool.query('UPDATE quotations SET stock_deducted = 0 WHERE id = $1', [quotationId]);
-    return;
-  }
+  const markRestored: [string, unknown[]] = ['UPDATE quotations SET stock_deducted = 0 WHERE id = $1', [quotationId]];
+  if (!deductions.length) return [markRestored];
 
-  const [{ rows: existingBatches }, { rows: existingInventory }] = await pool.batch([
+  const [{ rows: existingBatches }, { rows: existingInventory }, { rows: [maxBatch] }] = await pool.batch([
     ['SELECT id FROM inventory_batches WHERE id IN (SELECT value FROM json_each($1))', [JSON.stringify(deductions.map((d) => d.batch_id))]],
     ['SELECT id FROM inventory WHERE id IN (SELECT value FROM json_each($1))', [JSON.stringify(deductions.map((d) => d.inventory_id))]],
+    ['SELECT COALESCE(MAX(id), 0) AS id FROM inventory_batches', []],
   ]);
   const batchExists = new Set(existingBatches.map((b: any) => b.id as number));
   const inventoryExists = new Set(existingInventory.map((i: any) => i.id as number));
+  const reason = `訂單還原 #${quotationId}`;
 
   const putBack: BatchTake[] = [];
   const logs: LogEntry[] = [];
@@ -382,7 +387,7 @@ export async function restoreQuotationStock(quotationId: number): Promise<void> 
         change_qty: d.quantity,
         unit_cost: d.unit_cost,
         total_cost: d.quantity * d.unit_cost,
-        reason: `訂單還原 #${quotationId}`,
+        reason,
         batch_id: d.batch_id,
       });
     } else if (inventoryExists.has(d.inventory_id)) {
@@ -391,16 +396,37 @@ export async function restoreQuotationStock(quotationId: number): Promise<void> 
     }
   }
 
-  await pool.batch([
-    takeFromBatchesStatement(putBack),
-    insertLogsStatement(logs),
+  const statements: [string, unknown[]][] = [];
+  if (putBack.length) statements.push(takeFromBatchesStatement(putBack), insertLogsStatement(logs));
+  if (rebuild.length) {
+    statements.push(
+      [
+        `INSERT INTO inventory_batches (inventory_id, unit_cost, quantity, remaining, supplier, note)
+         SELECT json_extract(value, '$.inventory_id'), json_extract(value, '$.unit_cost'), json_extract(value, '$.quantity'),
+                json_extract(value, '$.quantity'), '', $2
+         FROM json_each($1)`,
+        [JSON.stringify(rebuild), reason],
+      ],
+      // 剛剛建的批次（id 比讀的時候大、備註是這張單、還沒有異動紀錄）各記一筆「in」
+      [
+        `INSERT INTO inventory_logs (inventory_id, type, change_qty, unit_cost, total_cost, reason, batch_id)
+         SELECT b.inventory_id, 'in', b.quantity, b.unit_cost, b.quantity * b.unit_cost, $1, b.id
+         FROM inventory_batches b
+         WHERE b.id > $2 AND b.note = $1 AND NOT EXISTS (SELECT 1 FROM inventory_logs l WHERE l.batch_id = b.id)`,
+        [reason, maxBatch?.id ?? 0],
+      ],
+    );
+  }
+  statements.push(
     recalcStatement(deductions.map((d) => d.inventory_id)),
     ['DELETE FROM quotation_stock_deductions WHERE quotation_id = $1', [quotationId]],
-    ['UPDATE quotations SET stock_deducted = 0 WHERE id = $1', [quotationId]],
-  ]);
-  if (rebuild.length) {
-    await stockInMany(rebuild, '', `訂單還原 #${quotationId}`);
-  }
+    markRestored,
+  );
+  return statements;
+}
+
+export async function restoreQuotationStock(quotationId: number): Promise<void> {
+  await pool.batch(await restoreQuotationStockStatements(quotationId));
 }
 
 // ========== 報價單明細（一句寫完） ==========

@@ -184,7 +184,8 @@ multipart，欄位 `images`，一次最多 10 張、每張 10MB，只收 `image/
 
 ### `DELETE /api/quotations/:id`
 
-刪訂單：扣過庫存的先還原，再刪 R2 的圖、品項、圖片紀錄、訂單。檢測表、扣庫存紀錄跟著刪（外鍵 CASCADE）。
+刪訂單，**一個 batch 一起成功或失敗**：先把保固、維修工單的 `quotation_id` 改成 null（它們留著，只是不再關聯），
+扣過庫存的還原，再刪圖片紀錄、品項、訂單；檢測表、扣庫存紀錄跟著刪（外鍵 CASCADE）。資料庫刪成功後才刪 R2 的圖。訂單不存在也回 `{ success: true }`。
 已經發布到官網的，官網那筆不會跟著刪（要先「從官網拿掉」）。
 
 ## 發布到官網
@@ -253,7 +254,7 @@ multipart，欄位 `images`，一次最多 10 張、每張 10MB，只收 `image/
 
 ### `DELETE /api/customers/:id`
 
-刪客戶和他的服務紀錄。他的訂單留著（名字還在），只是 `customer_id` 改成 null。
+刪客戶和他的服務紀錄（一個 batch）。他的訂單、保固、維修工單留著（名字還在），只是 `customer_id` 改成 null（不然外鍵會擋住）。
 
 ### `POST /api/customers/:id/services`
 
@@ -353,7 +354,7 @@ multipart，欄位 `images`，一次最多 10 張、每張 10MB，只收 `image/
 
 ### `DELETE /api/reports/warranties/:id`
 
-刪一筆保固。
+刪一筆保固。關聯這筆保固的維修工單留著，`warranty_id` 改成 null（同一個 batch）。
 
 ### `GET /api/reports/repairs`
 

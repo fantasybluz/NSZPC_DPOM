@@ -405,6 +405,48 @@ describe('訂單關聯客戶', () => {
   });
 });
 
+describe('刪除有關聯的資料（外鍵）', () => {
+  it('刪掉有保固、維修工單的客戶：保固、工單留著、不再關聯', async () => {
+    const c = await request('POST', '/api/customers', { name: `外鍵客戶${unique}` });
+    const w = await request('POST', '/api/reports/warranties', { customer_id: c.body.id, customer_name: `外鍵客戶${unique}`, product_name: '主機' });
+    const r = await request('POST', '/api/reports/repairs', { customer_id: c.body.id, customer_name: `外鍵客戶${unique}`, device_name: '主機' });
+    const del = await request('DELETE', `/api/customers/${c.body.id}`);
+    assert.equal(del.status, 200, JSON.stringify(del.body));
+    assert.equal((await request('GET', `/api/customers/${c.body.id}`)).status, 404);
+    const warranty = (await request('GET', '/api/reports/warranties')).body.find((x: any) => x.id === w.body.id);
+    assert.equal(warranty.customer_id, null);
+    assert.equal(warranty.customer_name, `外鍵客戶${unique}`);
+    assert.equal((await request('GET', `/api/reports/repairs/${r.body.id}`)).body.customer_id, null);
+    await request('DELETE', `/api/reports/repairs/${r.body.id}`);
+    await request('DELETE', `/api/reports/warranties/${w.body.id}`);
+  });
+
+  it('刪掉有保固、維修工單的訂單：庫存還回去、保固和工單不再關聯', async () => {
+    const inv = await request('POST', '/api/inventory', { category_id: 1, name: `外鍵商品${unique}`, initial_qty: 3, initial_cost: 100 });
+    const q = await request('POST', '/api/quotations', {
+      customer_name: `外鍵訂單${unique}`, status: 'completed', items: [{ name: 'X', cost: 100, price: 200, quantity: 2, inventory_id: inv.body.id }],
+    });
+    assert.equal(q.status, 200);
+    assert.equal((await request('GET', `/api/inventory/${inv.body.id}/detail`)).body.quantity, 1);
+    const w = await request('POST', '/api/reports/warranties', { quotation_id: q.body.id, product_name: '主機' });
+    const r = await request('POST', '/api/reports/repairs', { quotation_id: q.body.id, warranty_id: w.body.id, device_name: '主機' });
+
+    const del = await request('DELETE', `/api/quotations/${q.body.id}`);
+    assert.equal(del.status, 200, JSON.stringify(del.body));
+    assert.equal((await request('GET', `/api/quotations/${q.body.id}`)).status, 404);
+    assert.equal((await request('GET', `/api/inventory/${inv.body.id}/detail`)).body.quantity, 3);
+    assert.equal((await request('GET', '/api/reports/warranties')).body.find((x: any) => x.id === w.body.id).quotation_id, null);
+    assert.equal((await request('GET', `/api/reports/repairs/${r.body.id}`)).body.quotation_id, null);
+
+    // 刪掉有維修工單的保固：工單留著、不再關聯
+    assert.equal((await request('DELETE', `/api/reports/warranties/${w.body.id}`)).status, 200);
+    assert.equal((await request('GET', `/api/reports/repairs/${r.body.id}`)).body.warranty_id, null);
+
+    await request('DELETE', `/api/reports/repairs/${r.body.id}`);
+    await request('DELETE', `/api/inventory/${inv.body.id}`);
+  });
+});
+
 describe('資安', () => {
   it('從其他網站送來會改資料的請求會被擋（CSRF）', async () => {
     const res = await fetch(new URL('/api/customers', BASE_URL), {
