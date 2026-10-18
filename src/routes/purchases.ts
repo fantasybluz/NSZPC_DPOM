@@ -101,31 +101,46 @@ router.post('/orders', async (req: Request, res: Response) => {
   res.json({ id: orderId });
 });
 
-// 更新狀態
+// 更新狀態：只能「待到貨 ↔ 已取消」；已到貨的已經入庫了，不能改回去（要改庫存請用庫存管理）
 router.put('/orders/:id/status', async (req: Request, res: Response) => {
   const { status } = req.body;
   // 到貨要走 /receive（會入庫），這裡只能改成待到貨或取消
   if (!['pending', 'cancelled'].includes(status)) return res.status(400).json({ error: '狀態只能是 pending 或 cancelled' });
-  await pool.query('UPDATE purchase_orders SET status=$1 WHERE id=$2', [status, req.params.id]);
+  const { rows: [order] } = await pool.query('SELECT status FROM purchase_orders WHERE id=$1', [req.params.id]);
+  if (!order) return res.status(404).json({ error: '找不到訂單' });
+  if (order.status === 'received') return res.status(400).json({ error: '這張叫貨單已經到貨入庫，不能再改狀態' });
+  await pool.query("UPDATE purchase_orders SET status=$1 WHERE id=$2 AND status IN ('pending', 'cancelled')", [status, req.params.id]);
   res.json({ success: true });
 });
 
-// 確認叫貨到貨
+// 確認叫貨到貨：只有待到貨的可以（到過貨的再按一次會重複入庫，取消的不該入庫）
 router.post('/orders/:id/receive', async (req: Request, res: Response) => {
   const { stock_items } = req.body;
   const { rows } = await pool.query('SELECT * FROM purchase_orders WHERE id=$1', [req.params.id]);
   const order = rows[0] as any;
   if (!order) return res.status(404).json({ error: '找不到訂單' });
+  if (order.status !== 'pending') {
+    return res.status(400).json({ error: order.status === 'received' ? '這張叫貨單已經確認到貨過了' : '這張叫貨單已經取消，不能確認到貨' });
+  }
+
+  // 先把狀態改成已到貨（只改得動還是待到貨的），同時按兩次只有一次會成功，不會重複入庫
+  const { rowCount } = await pool.query("UPDATE purchase_orders SET status='received' WHERE id=$1 AND status='pending'", [req.params.id]);
+  if (!rowCount) return res.status(400).json({ error: '這張叫貨單已經確認到貨過了' });
 
   if (stock_items?.length) {
     // 一次進貨全部（不管幾項都是固定幾個查詢）
     const entries = stock_items
       .filter((item: any) => item.inventory_id && item.quantity > 0)
       .map((item: any) => ({ inventory_id: item.inventory_id, quantity: item.quantity, unit_cost: item.unit_cost || 0 }));
-    await stockInMany(entries, order.supplier_name, `叫貨單 #${order.id}`);
+    try {
+      await stockInMany(entries, order.supplier_name, `叫貨單 #${order.id}`);
+    } catch (err) {
+      // 入庫失敗：狀態改回待到貨，可以再按一次
+      await pool.query("UPDATE purchase_orders SET status='pending' WHERE id=$1", [req.params.id]);
+      throw err;
+    }
   }
 
-  await pool.query("UPDATE purchase_orders SET status='received' WHERE id=$1", [req.params.id]);
   res.json({ success: true });
 });
 

@@ -465,6 +465,16 @@ describe('Purchases API', () => {
     assert.equal(stocked.body.quantity, 3);
     assert.match(stocked.body.batches[0].note, /叫貨單/);
 
+    // 到過貨的不能再到一次（不會重複入庫），也不能改回待到貨或取消
+    const again = await request('POST', `/api/purchases/orders/${order.body.id}/receive`, {
+      stock_items: [{ inventory_id: inv.body.id, quantity: 3, unit_cost: 1000 }],
+    });
+    assert.equal(again.status, 400);
+    assert.equal((await request('GET', `/api/inventory/${inv.body.id}/detail`)).body.quantity, 3);
+    assert.equal((await request('PUT', `/api/purchases/orders/${order.body.id}/status`, { status: 'pending' })).status, 400);
+    assert.equal((await request('PUT', `/api/purchases/orders/${order.body.id}/status`, { status: 'cancelled' })).status, 400);
+    assert.equal((await request('GET', `/api/purchases/orders/${order.body.id}`)).body.status, 'received');
+
     assert.equal((await request('GET', '/api/purchases/stats')).status, 200);
 
     assert.equal((await request('DELETE', `/api/purchases/orders/${order.body.id}`)).status, 200);
@@ -474,6 +484,14 @@ describe('Purchases API', () => {
     assert.equal((await request('PUT', `/api/purchases/orders/${toCancel.body.id}/status`, { status: 'received' })).status, 400);
     assert.equal((await request('PUT', `/api/purchases/orders/${toCancel.body.id}/status`, { status: 'cancelled' })).status, 200);
     assert.equal((await request('GET', `/api/purchases/orders/${toCancel.body.id}`)).body.status, 'cancelled');
+    // 取消的不能確認到貨；可以改回待到貨
+    const receiveCancelled = await request('POST', `/api/purchases/orders/${toCancel.body.id}/receive`, {
+      stock_items: [{ inventory_id: inv.body.id, quantity: 1, unit_cost: 500 }],
+    });
+    assert.equal(receiveCancelled.status, 400);
+    assert.equal((await request('GET', `/api/inventory/${inv.body.id}/detail`)).body.quantity, 3);
+    assert.equal((await request('PUT', `/api/purchases/orders/${toCancel.body.id}/status`, { status: 'pending' })).status, 200);
+    assert.equal((await request('GET', `/api/purchases/orders/${toCancel.body.id}`)).body.status, 'pending');
     assert.equal((await request('DELETE', `/api/purchases/orders/${toCancel.body.id}`)).status, 200);
 
     assert.equal((await request('DELETE', `/api/purchases/suppliers/${sup.body.id}`)).status, 200);

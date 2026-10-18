@@ -297,12 +297,15 @@ multipart，欄位 `images`，一次最多 10 張、每張 10MB，只收 `image/
 
 ### `PUT /api/purchases/orders/:id/status`
 
-`{ status }`，只能是 `pending` 或 `cancelled`（到貨要走 receive）。前端只在待到貨時給「取消叫貨」。
+`{ status }`，只能是 `pending` 或 `cancelled`（到貨要走 receive），也就是「待到貨 ↔ 已取消」。
+已經到貨（`received`）的回 400「這張叫貨單已經到貨入庫，不能再改狀態」；找不到 404。前端只在待到貨時給「取消叫貨」。
 
 ### `POST /api/purchases/orders/:id/receive`
 
 確認到貨：`{ stock_items: [{ inventory_id, quantity, unit_cost }] }`，有對到庫存商品的項目一次全部進貨（每項一個批次，來源是盤商名稱、備註「叫貨單 #id」），
 狀態改成 `received`。沒對到商品的項目不入庫。
+**只有 `pending` 的可以**：已經到貨的回 400「這張叫貨單已經確認到貨過了」，已取消的回 400「這張叫貨單已經取消，不能確認到貨」。
+先用 `WHERE status = 'pending'` 改狀態再入庫，同時按兩次也只會入庫一次；入庫失敗時狀態改回 `pending`。
 
 ### `DELETE /api/purchases/orders/:id`
 
