@@ -492,6 +492,29 @@ describe('刪除有關聯的資料（外鍵）', () => {
   });
 });
 
+describe('預設日期用台灣時間', () => {
+  // 台灣早上 8 點前 UTC 還是前一天，這段時間跑才看得出差別
+  const taipeiToday = () => new Date().toLocaleDateString('sv', { timeZone: 'Asia/Taipei' });
+
+  it('服務紀錄、叫貨單、維修收件日沒給日期時是台灣的今天', async () => {
+    const c = await request('POST', '/api/customers', { name: `日期${unique}` });
+    await request('POST', `/api/customers/${c.body.id}/services`, { service_type: '維修' });
+    assert.equal((await request('GET', `/api/customers/${c.body.id}`)).body.services[0].service_date, taipeiToday());
+
+    const sup = await request('POST', '/api/purchases/suppliers', { name: `日期盤商${unique}` });
+    const order = await request('POST', '/api/purchases/orders', { supplier_id: sup.body.id, items: [{ product_name: 'A', quantity: 1, unit_price: 1 }] });
+    assert.equal((await request('GET', `/api/purchases/orders/${order.body.id}`)).body.order_date, taipeiToday());
+
+    const repair = await request('POST', '/api/reports/repairs', { customer_name: `日期${unique}` });
+    assert.equal((await request('GET', `/api/reports/repairs/${repair.body.id}`)).body.received_date, taipeiToday());
+
+    await request('DELETE', `/api/reports/repairs/${repair.body.id}`);
+    await request('DELETE', `/api/purchases/orders/${order.body.id}`);
+    await request('DELETE', `/api/purchases/suppliers/${sup.body.id}`);
+    await request('DELETE', `/api/customers/${c.body.id}`);
+  });
+});
+
 describe('資安', () => {
   it('從其他網站送來會改資料的請求會被擋（CSRF）', async () => {
     const res = await fetch(new URL('/api/customers', BASE_URL), {

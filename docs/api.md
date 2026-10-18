@@ -259,7 +259,7 @@ multipart，欄位 `images`，一次最多 10 張、每張 10MB，只收 `image/
 
 ### `POST /api/customers/:id/services`
 
-新增服務紀錄：`{ service_type, description, service_date? }` → `{ id }`。
+新增服務紀錄：`{ service_type, description, service_date? }` → `{ id }`。沒給 `service_date` 是台灣時間的今天。
 
 ### `DELETE /api/customers/:id/services/:sid`
 
@@ -295,7 +295,7 @@ multipart，欄位 `images`，一次最多 10 張、每張 10MB，只收 `image/
 ### `POST /api/purchases/orders`
 
 `{ supplier_id, items: [{ product_name, brand?, spec?, quantity, unit_price }], order_date?, tax_type?, note? }` → `{ id }`。
-狀態 `pending`。小計 = Σ 單價 × 數量；含稅時稅額 = 小計 − 小計 / 1.05（四捨五入），未稅稅額 0；總額都等於小計。盤商不存在 400。
+狀態 `pending`，沒給 `order_date` 是台灣時間的今天。小計 = Σ 單價 × 數量；含稅時稅額 = 小計 − 小計 / 1.05（四捨五入），未稅稅額 0；總額都等於小計。盤商不存在 400。
 
 ### `PUT /api/purchases/orders/:id/status`
 
@@ -368,7 +368,7 @@ multipart，欄位 `images`，一次最多 10 張、每張 10MB，只收 `image/
 ### `POST /api/reports/repairs`
 
 `{ customer_id?, customer_name?, warranty_id?, quotation_id?, device_name?, serial_number?, issue?, priority?, note? }` → `{ id, repair_no }`。
-單號 `R` + 台灣日期 + 三位流水號，狀態 `received`，同時記一筆「工單建立」。`priority`：`low`、`normal`（預設）、`high`、`urgent`。
+單號 `R` + 台灣日期 + 三位流水號，收件日 `received_date` 是台灣時間的今天，狀態 `received`，同時記一筆「工單建立」。`priority`：`low`、`normal`（預設）、`high`、`urgent`。
 
 ### `PUT /api/reports/repairs/:id`
 
@@ -381,11 +381,11 @@ multipart，欄位 `images`，一次最多 10 張、每張 10MB，只收 `image/
 
 ### `GET /api/reports/notifications`
 
-`{ lowStock, expiringWarranties（30 天內到期、狀態 active）, unpaidSettlements, activeRepairs（不是 completed、returned、cancelled 的工單，照優先度 urgent > high > normal > low 排，同優先度先建的在前）}`。
+`{ lowStock, expiringWarranties（台灣時間今天起 30 天內到期、狀態 active）, unpaidSettlements, activeRepairs（不是 completed、returned、cancelled 的工單，照優先度 urgent > high > normal > low 排，同優先度先建的在前）}`。
 
 ### `GET /api/reports/export/:type`
 
-下載 CSV（UTF-8 加 BOM，Excel 打得開），檔名 `<type>_<日期>.csv`。`type`：`inventory`、`customers`、`quotations`、`repairs`，其他回 400。
+下載 CSV（UTF-8 加 BOM，Excel 打得開），檔名 `<type>_<台灣日期>.csv`。`type`：`inventory`、`customers`、`quotations`、`repairs`，其他回 400。
 每格都用雙引號包起來；`0` 輸出 `0`（只有沒有值才是空白）；文字開頭是 `=`、`+`、`-`、`@`、Tab、CR 的前面加 `'`，Excel 不會當成公式（CSV injection），數字不加。
 
 ## 設定、社群

@@ -85,7 +85,7 @@ router.post('/orders', async (req: Request, res: Response) => {
 
   const { rows } = await pool.query(
     'INSERT INTO purchase_orders (supplier_id, supplier_name, tax_type, subtotal, tax_amount, total_amount, status, order_date, note) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
-    [supplier_id, supplier.name, tt, subtotal, taxAmount, total, 'pending', order_date || new Date().toISOString().slice(0, 10), note || '']
+    [supplier_id, supplier.name, tt, subtotal, taxAmount, total, 'pending', order_date || taipeiDate(), note || '']
   );
   const orderId = rows[0].id;
   if (items?.length) {

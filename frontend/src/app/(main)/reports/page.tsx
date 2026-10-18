@@ -79,7 +79,7 @@ const STATUS_COLORS: Record<string, string> = {
 /** 保固狀態：報修過就是 claimed，否則依到期日是 active 或 expired（資料庫不會自己改成過期） */
 const warrantyStatus = (w: { status: string; warranty_end: string }): string => {
   if (w.status === 'claimed') return 'claimed';
-  return w.warranty_end && w.warranty_end < new Date().toISOString().slice(0, 10) ? 'expired' : 'active';
+  return w.warranty_end && w.warranty_end < Fmt.today() ? 'expired' : 'active';
 };
 
 const REP_STATUS_LABELS: Record<string, string> = {
@@ -119,7 +119,7 @@ export default function ReportsPage() {
   const [warStatus, setWarStatus] = useState('');
   const [warSearch, setWarSearch] = useState('');
   const [showWarModal, setShowWarModal] = useState(false);
-  const [warForm, setWarForm] = useState({ product_name: '', serial_number: '', customer_name: '', ship_date: new Date().toISOString().slice(0, 10), warranty_months: 12, note: '' });
+  const [warForm, setWarForm] = useState({ product_name: '', serial_number: '', customer_name: '', ship_date: Fmt.today(), warranty_months: 12, note: '' });
 
   /* repairs */
   const [repairs, setRepairs] = useState<Repair[]>([]);
@@ -275,7 +275,7 @@ export default function ReportsPage() {
     if (!editRepair) return;
     const payload: any = { ...editRepForm, cost: parseInt(String(editRepForm.cost)) || 0 };
     if (payload.status === 'completed' || payload.status === 'returned') {
-      payload.completed_date = new Date().toISOString().slice(0, 10);
+      payload.completed_date = Fmt.today();
     }
     try {
       await api.put(`/reports/repairs/${editRepair.id}`, payload);
@@ -343,7 +343,7 @@ export default function ReportsPage() {
   }), []);
 
   const t = profit?.total || { revenue: 0, cost: 0, profit: 0, count: 0 };
-  const today = new Date().toISOString().slice(0, 10);
+  const today = Fmt.today();
 
   /* ── render ── */
   return (
@@ -461,7 +461,7 @@ export default function ReportsPage() {
               <input type="text" className="form-control form-control-sm" placeholder="搜尋..." style={{ width: 150 }} value={warSearch} onChange={e => { setWarSearch(e.target.value); setWarPage(1); }} />
             </div>
             <button className="btn btn-primary btn-sm" onClick={() => {
-              setWarForm({ product_name: '', serial_number: '', customer_name: '', ship_date: new Date().toISOString().slice(0, 10), warranty_months: 12, note: '' });
+              setWarForm({ product_name: '', serial_number: '', customer_name: '', ship_date: Fmt.today(), warranty_months: 12, note: '' });
               setShowWarModal(true);
             }}>
               <i className="bi bi-plus-lg" /> 新增保固

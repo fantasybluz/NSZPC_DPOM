@@ -134,8 +134,9 @@ router.post('/repairs', async (req: Request, res: Response) => {
   const { customer_id, customer_name, warranty_id, quotation_id, device_name, serial_number, issue, priority, note } = req.body;
   const repair_no = await generateRepairNo();
   const { rows } = await pool.query(
-    'INSERT INTO repair_orders (repair_no, customer_id, customer_name, warranty_id, quotation_id, device_name, serial_number, issue, priority, note) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
-    [repair_no, customer_id || null, customer_name || '', warranty_id || null, quotation_id || null, device_name || '', serial_number || '', issue || '', priority || 'normal', note || '']
+    // 收件日用台灣時間（資料表預設的 date('now') 是 UTC）
+    'INSERT INTO repair_orders (repair_no, customer_id, customer_name, warranty_id, quotation_id, device_name, serial_number, issue, priority, note, received_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id',
+    [repair_no, customer_id || null, customer_name || '', warranty_id || null, quotation_id || null, device_name || '', serial_number || '', issue || '', priority || 'normal', note || '', taipeiDate()]
   );
   await pool.query('INSERT INTO repair_logs (repair_id, status, description) VALUES ($1,$2,$3)', [rows[0].id, 'received', '工單建立']);
   res.json({ id: rows[0].id, repair_no });
@@ -173,13 +174,14 @@ router.delete('/repairs/:id', async (req: Request, res: Response) => {
 // ========== 通知提醒 ==========
 
 router.get('/notifications', async (_req: Request, res: Response) => {
-  const today = new Date().toISOString().slice(0, 10);
-  const in30 = new Date(); in30.setDate(in30.getDate() + 30);
+  // 台灣時間的今天、30 天後（Worker 是 UTC，早上 8 點前直接用 toISOString 會變成昨天）
+  const today = taipeiDate();
+  const in30 = taipeiDate(new Date(Date.now() + 30 * 86_400_000));
 
   const { rows: lowStock } = await pool.query('SELECT name, quantity, min_quantity FROM inventory WHERE quantity <= min_quantity AND min_quantity > 0');
   const { rows: expiringWarranties } = await pool.query(
     "SELECT * FROM warranties WHERE status='active' AND warranty_end != '' AND warranty_end <= $1 AND warranty_end >= $2",
-    [in30.toISOString().slice(0,10), today]
+    [in30, today]
   );
   const { rows: unpaidSettlements } = await pool.query("SELECT * FROM settlements WHERE status='unpaid'");
   // 進行中 = 還沒完成、還沒取件、沒取消；照優先度（緊急 > 急件 > 一般 > 低），同優先度先收件的在前
@@ -243,7 +245,7 @@ router.get('/export/:type', async (req: Request, res: Response) => {
   const bom = '\uFEFF';
   const csv = bom + [headers, ...rows].map((r) => r.map(csvCell).join(',')).join('\n');
 
-  const date = new Date().toISOString().slice(0, 10);
+  const date = taipeiDate();
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}_${date}.csv"`);
   res.send(csv);

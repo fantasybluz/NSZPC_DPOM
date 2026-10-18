@@ -11,3 +11,8 @@ export function percent(n: number | null | undefined): string {
   return (n || 0).toFixed(1) + '%';
 }
 
+
+/** 台灣時間的今天（YYYY-MM-DD）；不要用 toISOString()，那是 UTC，早上 8 點前會變成昨天 */
+export function today(): string {
+  return new Date().toLocaleDateString('sv', { timeZone: 'Asia/Taipei' });
+}

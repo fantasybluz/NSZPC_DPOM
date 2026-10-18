@@ -206,6 +206,8 @@ Cloudflare Worker「nszpc-dpom」
 
 - **Next.js 靜態輸出**（`next.config.ts` 的 `output: "export"`），`npm run build` 輸出到 `frontend/out`，由 Worker 當靜態檔回。
   檔名是 `dashboard.html` 這種，`wrangler.jsonc` 的 `html_handling: "auto-trailing-slash"` 讓 `/dashboard` 對得到；找不到回 `404.html`
+- **「今天」用台灣時間**：前端的預設日期（服務紀錄、叫貨單、結款、保固出貨日、維修完成日、保固是否過期）用 `lib/format.ts` 的 `today()`
+  （`toLocaleDateString('sv', { timeZone: 'Asia/Taipei' })`），不用 `toISOString()`（UTC，台灣早上 8 點前會變成昨天）；Worker 用 `taipeiDate()`
 - 頁面在 `frontend/src/app/(main)/`：`dashboard`、`inventory`、`quotations`、`customers`、`purchases`、`reports`、`social`、`categories`、`users`、`changelog`；
   外框（側欄、頂列）在 `(main)/layout.tsx`。沒登入成功顯示 `NotSignedIn`（例如 email 還沒開通）
 - API 呼叫都走 [`frontend/src/lib/api.ts`](../frontend/src/lib/api.ts)（`/api` 開頭、同網域 cookie）

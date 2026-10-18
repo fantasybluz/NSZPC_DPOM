@@ -56,7 +56,7 @@ export default function CustomersPage() {
   const [form, setForm] = useState({ name: '', phone: '', email: '', source: '', city: '', district: '', address: '', note: '' });
 
   // Detail
-  const [svcForm, setSvcForm] = useState({ type: SERVICE_TYPES[0], date: new Date().toLocaleDateString('sv'), desc: '' });
+  const [svcForm, setSvcForm] = useState({ type: SERVICE_TYPES[0], date: Fmt.today(), desc: '' });
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState<Customer | null>(null);
 

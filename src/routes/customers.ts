@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from '../lib/router';
-import pool from '../models/database';
+import pool, { taipeiDate } from '../models/database';
 import type { Customer, ServiceRecord } from '../types';
 
 const router = new Router();
@@ -93,7 +93,7 @@ router.post('/:id/services', async (req: Request, res: Response) => {
   const { service_type, description, service_date } = req.body;
   const { rows } = await pool.query(
     'INSERT INTO service_records (customer_id, service_type, description, service_date) VALUES ($1, $2, $3, $4) RETURNING id',
-    [req.params.id, service_type || '', description || '', service_date || new Date().toISOString().slice(0, 10)]
+    [req.params.id, service_type || '', description || '', service_date || taipeiDate()]
   );
   res.json({ id: rows[0].id });
 });

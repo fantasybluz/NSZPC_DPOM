@@ -114,7 +114,7 @@ export default function PurchasesPage() {
   const [supplierForm, setSupplierForm] = useState({ name: '', payment_type: 'weekly', default_tax_type: 'tax_included', contact: '', note: '' });
 
   const [orderModal, setOrderModal] = useState(false);
-  const [orderForm, setOrderForm] = useState({ supplier_id: '', order_date: new Date().toISOString().slice(0, 10), tax_type: 'tax_included', note: '' });
+  const [orderForm, setOrderForm] = useState({ supplier_id: '', order_date: Fmt.today(), tax_type: 'tax_included', note: '' });
   const [poItems, setPoItems] = useState<POItemFormData[]>([newPOItem()]);
 
   const [receiveModal, setReceiveModal] = useState(false);
@@ -201,7 +201,7 @@ export default function PurchasesPage() {
 
   /* ===== Order CRUD ===== */
   const openOrderForm = () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = Fmt.today();
     const firstSup = suppliers[0];
     setOrderForm({
       supplier_id: firstSup ? String(firstSup.id) : '',
@@ -317,7 +317,7 @@ export default function PurchasesPage() {
 
   /* ===== Settlement CRUD ===== */
   const openSettlementForm = () => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = Fmt.today();
     const monthStart = today.slice(0, 8) + '01';
     const firstSup = suppliers[0];
     setStlForm({
@@ -359,7 +359,7 @@ export default function PurchasesPage() {
 
   const markPaid = async (id: number) => {
     try {
-      await api.put(`/purchases/settlements/${id}`, { status: 'paid', paid_date: new Date().toISOString().slice(0, 10) });
+      await api.put(`/purchases/settlements/${id}`, { status: 'paid', paid_date: Fmt.today() });
       showToast('已標記結款');
       loadAll();
     } catch (err: any) { showToast(err.message, 'danger'); }
