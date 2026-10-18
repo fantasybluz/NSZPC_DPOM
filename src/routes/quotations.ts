@@ -22,7 +22,7 @@ const IMAGE_EXT: Record<string, string> = {
 const FILENAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 const uploadKey = (filename: string): string => `uploads/${filename}`;
 
-/** 讀一張上傳的圖片（routes 和 worker.ts 的 /api/uploads 共用） */
+/** 從 R2 讀一張上傳的圖片（給下面的 GET /:id/images/:filename 用；檔名不合格式或找不到回 404） */
 async function serveUpload(env: Env, filename: string): Promise<globalThis.Response> {
   if (!FILENAME_PATTERN.test(filename)) {
     return new Response().status(404).json({ error: '圖片不存在' }).toResponse();
