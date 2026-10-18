@@ -68,6 +68,7 @@ email 不在 `users` 回 403「xxx 還沒開通…」，停用回 403「這個�
 ### `POST /api/inventory/categories`
 
 管理員。`{ name, parent_id?, icon? }` → `{ id }`，放在同一層最後面。`name` 必填。
+有給 `parent_id` 時檢查：上層存在（不然 400「上層分類不存在」）、上層**沒有庫存**（不然 400，跟移動分類同一條規則）。
 同一層同名會撞 `UNIQUE (parent_id, name)`（回 500）。
 
 ### `PUT /api/inventory/categories/reorder`

@@ -141,6 +141,10 @@ describe('Categories API', () => {
     const intoStocked = await request('PUT', `/api/inventory/categories/${other.body.id}`, { parent_id: child.body.id });
     assert.equal(intoStocked.status, 400);
     assert.match(intoStocked.body.error, /庫存/);
+    // 直接在有庫存的分類底下新增子分類也不行
+    const newUnderStocked = await request('POST', '/api/inventory/categories', { name: `子分類-${unique}`, parent_id: child.body.id });
+    assert.equal(newUnderStocked.status, 400);
+    assert.match(newUnderStocked.body.error, /庫存/);
 
     // 移回第一層
     assert.equal((await request('PUT', `/api/inventory/categories/${other.body.id}`, { parent_id: null })).status, 200);

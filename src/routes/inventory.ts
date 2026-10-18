@@ -23,6 +23,15 @@ router.get('/categories', async (_req: Request, res: Response) => {
 router.post('/categories', adminOnly, async (req: Request, res: Response) => {
   const { name, parent_id, icon } = req.body;
   if (!name) return res.status(400).json({ error: '名稱必填' });
+  if (parent_id) {
+    // 跟移動分類一樣：庫存只能放在最末端分類，已經有庫存的分類底下不能再加子分類
+    const [{ rows: [parent] }, { rows: [used] }] = await pool.batch([
+      ['SELECT id FROM categories WHERE id = $1', [parent_id]],
+      ['SELECT COUNT(*) AS count FROM inventory WHERE category_id = $1', [parent_id]],
+    ]);
+    if (!parent) return res.status(400).json({ error: '上層分類不存在' });
+    if (used.count > 0) return res.status(400).json({ error: '這個分類已經有庫存，不能再放子分類（庫存只能歸在最末端分類）' });
+  }
   const maxSortResult = parent_id
     ? await pool.query('SELECT COALESCE(MAX(sort_order),0)+1 as next FROM categories WHERE parent_id=$1', [parent_id])
     : await pool.query('SELECT COALESCE(MAX(sort_order),0)+1 as next FROM categories WHERE parent_id IS NULL');
